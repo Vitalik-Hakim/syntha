@@ -30,6 +30,25 @@ class Candidate:
         )
 
 
+def filter_markets(
+    markets: list[dict[str, Any]],
+    *,
+    categories: list[str] | None = None,
+    min_lifetime_volume: float | None = None,
+) -> list[dict[str, Any]]:
+    """Optional pre-filters. `min_lifetime_volume` uses an outcome-dependent field; callers must
+    record it in the collection manifest (see fetch.sample_collection)."""
+    wanted = None if categories is None else {c.lower() for c in categories}
+    out = []
+    for m in markets:
+        if wanted is not None and fee_category(m.get("feeType")) not in wanted:
+            continue
+        if min_lifetime_volume is not None and float(m.get("volumeNum") or 0) < min_lifetime_volume:
+            continue
+        out.append(m)
+    return out
+
+
 def allocate(sizes: dict[str, int], n: int) -> dict[str, int]:
     """Split `n` across strata as evenly as possible, capped by each stratum's size.
 

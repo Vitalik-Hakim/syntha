@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -121,6 +121,8 @@ class Dataset:
     tokens: dict[str, TokenData]
     fee_schedules: tuple[FeeScheduleEntry, ...] = ()
     dataset_version_id: str | None = None
+    # How the markets were selected (collection manifest definition), used for bias warnings.
+    selection: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         for tok in self.tokens.values():

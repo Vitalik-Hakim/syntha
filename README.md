@@ -80,6 +80,24 @@ make m2-acceptance                                             # golden fixtures
 make bench-engine                                              # 1,000 markets × 90 days benchmark
 ```
 
+**From the browser:** open http://localhost:3100/simulate, pick a strategy, a collection, an
+execution preset and starting capital, and submit. The run page streams progress, then shows the
+equity curve, cost attribution, data quality and a link to the trade blotter. Runs are queued to
+the worker, so `make dev` must be running all three processes. The same API is at
+http://localhost:8100/docs (`POST /api/backtests`, `GET /api/backtests/{id}`, `/stream`, `/equity`,
+`/trades`, `/export.csv`, `/export.json`).
+
+Two collections so far:
+
+| Collection | What it is | Use it for |
+| --- | --- | --- |
+| `july-2026-stratified-600` | Seeded, stratified, no outcome-dependent filter | Any strategy; most markets are thin |
+| `july-2026-liquid-sports-300` | Sports markets with final volume ≥ $7,500 | Strategies with `min_volume_asof` ≥ $10,000 only; lower filters are survivorship-biased (see DATA_NOTES) |
+
+```sh
+uv run strategy-lab run examples/underdog-liquid-sports.json   # the M3 acceptance run, from the CLI
+```
+
 A config is a `BacktestRequest` ([schema](packages/contracts/backtest-request.schema.json)); the
 strategy inside it is DSL ([schema](packages/contracts/strategy.schema.json)). Each run prints a
 summary and writes trades, equity, ledger, metrics and data quality to `data/runs/<run id>/`.

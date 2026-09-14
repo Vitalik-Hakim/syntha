@@ -19,7 +19,7 @@ from syntha_ingestion.config import IngestSettings
 from syntha_ingestion.http import ApiClient, FetchError
 from syntha_ingestion.parse import json_list, open_ts, parse_ts
 from syntha_ingestion.raw_store import RawStore
-from syntha_ingestion.sampling import Candidate, stratified_sample
+from syntha_ingestion.sampling import Candidate, filter_markets, stratified_sample
 
 log = logging.getLogger(__name__)
 
@@ -66,34 +66,74 @@ async def sample_collection(
     end_date_max: str,
     n: int,
     seed: int,
+    categories: list[str] | None = None,
+    min_lifetime_volume: float | None = None,
+    volume_safety_ratio: float = 0.75,
+    from_raw_listing: bool = False,
     client: ApiClient | None = None,
 ) -> dict[str, Any]:
+    """Draw a seeded stratified sample of markets scheduled to end in the window.
+
+    `min_lifetime_volume` pre-filters on Gamma's *final* lifetime volume. That is survivorship bias
+    for most uses (PRD §5.1 rule 3), with one exception recorded in the manifest: a strategy whose
+    point-in-time `min_volume_asof` filter is at least `min_lifetime_volume / volume_safety_ratio`
+    could never trade the excluded markets anyway. Gamma's lifetime volume was ≥ 0.797× our
+    print notional in every checked market (docs/DATA_NOTES.md); 0.75 leaves a margin.
+    """
     raw = RawStore(settings.raw_dir)
     if raw.manifest_path(name).exists():
         raise FileExistsError(
             f"collection manifest {name!r} already exists; manifests are immutable"
         )
 
-    own_client = client is None
-    api = client or ApiClient(raw, requests_per_second=settings.requests_per_second)
-    candidates: list[Candidate] = []
+    markets: list[dict[str, Any]] = []
     listed = {"closed": 0, "open": 0}
-    try:
-        for closed in (True, False):  # unresolved markets stay in the universe (PRD §5.1 rule 6)
-            async for market in pm.list_markets(
-                api, end_date_min=end_date_min, end_date_max=end_date_max, closed=closed
+    if from_raw_listing:
+        seen: set[str] = set()
+        for rec in reversed(raw.records(pm.GAMMA_MARKETS_KEYSET)):  # newest listing first
+            unit = rec.unit
+            if (
+                rec.status != 200
+                or unit.get("end_date_min") != end_date_min
+                or unit.get("end_date_max") != end_date_max
             ):
-                listed["closed" if closed else "open"] += 1
-                candidates.append(Candidate.from_gamma(market))
-            log.info(
-                "listed %d %s markets",
-                listed["closed" if closed else "open"],
-                "closed" if closed else "open",
+                continue
+            for market in rec.json().get("markets") or []:
+                if market["conditionId"] in seen:
+                    continue
+                seen.add(market["conditionId"])
+                listed["closed" if unit.get("closed") else "open"] += 1
+                markets.append(market)
+        if not markets:
+            raise ValueError(
+                "no raw listing for this window; sample without --from-raw-listing first"
             )
-    finally:
-        if own_client:
-            await api.aclose()
+    else:
+        own_client = client is None
+        api = client or ApiClient(raw, requests_per_second=settings.requests_per_second)
+        try:
+            for closed in (
+                True,
+                False,
+            ):  # unresolved markets stay in the universe (PRD §5.1 rule 6)
+                async for market in pm.list_markets(
+                    api, end_date_min=end_date_min, end_date_max=end_date_max, closed=closed
+                ):
+                    listed["closed" if closed else "open"] += 1
+                    markets.append(market)
+                log.info(
+                    "listed %d %s markets",
+                    listed["closed" if closed else "open"],
+                    "closed" if closed else "open",
+                )
+        finally:
+            if own_client:
+                await api.aclose()
 
+    eligible = filter_markets(
+        markets, categories=categories, min_lifetime_volume=min_lifetime_volume
+    )
+    candidates = [Candidate.from_gamma(m) for m in eligible]
     chosen = stratified_sample(candidates, n, seed)
     strata: dict[str, dict[str, int]] = {}
     for c in {c.condition_id: c for c in candidates}.values():
@@ -113,7 +153,22 @@ async def sample_collection(
             "allocation": "equal per stratum, capped by stratum size, remainder redistributed",
             "n_requested": n,
             "seed": seed,
-            "excluded_fields": "no outcome-dependent field (volume, liquidity, resolution) was used",
+            "categories": categories,
+            "excluded_fields": (
+                "no outcome-dependent field (volume, liquidity, resolution) was used"
+                if min_lifetime_volume is None
+                else "final lifetime volume was used as a pre-filter; see selection_uses_final_volume"
+            ),
+            "selection_uses_final_volume": None
+            if min_lifetime_volume is None
+            else {
+                "min_lifetime_volume": min_lifetime_volume,
+                "volume_safety_ratio": volume_safety_ratio,
+                "survivorship_free_for_min_volume_asof_at_least": min_lifetime_volume
+                / volume_safety_ratio,
+                "warning": "This collection excludes markets by final volume. Backtests whose "
+                "universe min_volume_asof is below the safe level above are survivorship-biased.",
+            },
         },
         "listed": listed,
         "strata": dict(sorted(strata.items())),

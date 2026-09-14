@@ -241,6 +241,39 @@ The liquidity numbers are the most important input for M2: most of these markets
 `TRADE_PRINT` execution will reject most signals as `UNEXECUTABLE`. That is the honest answer,
 not a defect.
 
+## M3 collection: `july-2026-liquid-sports-300` — added 2026-09-14
+
+Why it exists: the built-in Underdog strategy found **0 signals** on the stratified sample,
+because none of its 58 sports markets reached the strategy's $10k as-of volume filter. A
+backtest needs markets where the strategy could act at all.
+
+| | |
+| --- | --- |
+| Universe | Gamma sports markets (`feeType` sports) scheduled to end in July 2026 |
+| Pre-filter | Gamma **final** lifetime volume ≥ $7,500 |
+| Sample | 300 markets, seed 20260915 |
+| Safe for | strategies with `universe.min_volume_asof` ≥ $10,000 |
+
+**Why the pre-filter doesn't bias strategies with a high enough as-of volume filter.** A market
+excluded here has final Gamma volume < $7,500. The engine's as-of volume is cumulative
+*print notional* on the traded token up to the bar. On the stratified 600-market sample, of the
+577 markets with any prints, 573 had Gamma lifetime volume ≥ their total print notional
+(median ratio 1.55×) and the lowest was 0.797× (a mentions market, $3,399 Gamma vs $4,266
+prints). With a 0.75 safety ratio, an excluded market's print notional is at most
+7,500 / 0.75 = $10,000, so it could never pass a ≥ $10k as-of filter and could never have been
+traded. The as-of filter counts one token and Gamma counts the whole market, which only widens
+the margin.
+
+This rests on an observed ratio, not a documented rule. The collection manifest records it
+(`selection_uses_final_volume`), the API and simulator show it, and the engine attaches a
+`SURVIVORSHIP BIAS` warning to any run below the safe level.
+
+**First Underdog result (REALISTIC preset, $1,000):** 70 signals → 34 filled (31 no prints in the
+execution bar, 5 below minimum size), gross +$3.73, fees −$11.68, slippage −$10.48, **net
+−$18.43**. Costs are 5.9× the gross edge. Most exits are stop-losses on 1–30¢ outcomes, where one
+tick is a large fraction of the price. This run is a baseline, not a tuned result: nothing should
+be optimised on it before the out-of-sample and robustness tooling (M5).
+
 ---
 
 ## Schema
@@ -285,14 +318,14 @@ deliberately.
 documented date is used (overstates fees; conservative). The data-quality report flags fee types
 without a schedule and rate mismatches.
 
-### Normalized layer is single-version — open (M3)
+### Normalized layer is single-version — deferred to M6
 
 `make rebuild-normalized` replaces the normalized tables in place. Each build records a
 `dataset_versions` row with its content hash, but older versions' rows are not kept. A backtest
 run that references an older `dataset_version_id` can detect the mismatch (`syntha-ingest
-verify`) but can't be re-run on the old data without rebuilding from the same raw inputs. Decide
-in M3 whether to keep versioned snapshots (e.g. a schema per version) once backtests are
-persisted.
+verify`) but can't be re-run on the old data without rebuilding from the same raw inputs. Decided
+in M3: runs pin `dataset_version_id` and the hash in their manifest; versioned snapshots wait for
+M6 (reproducibility). See docs/DECISIONS.md.
 
 ### Token ids stored as text on every bar — open (M2)
 

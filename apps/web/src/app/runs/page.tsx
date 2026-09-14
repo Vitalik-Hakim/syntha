@@ -1,15 +1,9 @@
 import type { Metadata } from "next";
 
-import { NotYet } from "@/components/not-yet";
+import { RunsTable } from "./runs-table";
 
 export const metadata: Metadata = { title: "Runs" };
 
-export default function Page() {
-  return (
-    <NotYet
-      title="Runs"
-      milestone="M3"
-      description="Every backtest run, immutable, with its dataset version, config hash and seed."
-    />
-  );
+export default function RunsPage() {
+  return <RunsTable />;
 }

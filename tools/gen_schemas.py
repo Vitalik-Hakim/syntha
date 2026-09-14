@@ -26,11 +26,18 @@ def render(model: type) -> str:
     )  # type: ignore[attr-defined]
 
 
+def render_openapi() -> str:
+    from syntha_api.main import create_app
+
+    return json.dumps(create_app().openapi(), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+
+
 def main(argv: list[str]) -> int:
     stale = []
-    for name, model in SCHEMAS.items():
+    outputs = {name: render(model) for name, model in SCHEMAS.items()}
+    outputs["openapi.json"] = render_openapi()
+    for name, text in outputs.items():
         path = ROOT / name
-        text = render(model)
         if "--check" in argv:
             if not path.exists() or path.read_text() != text:
                 stale.append(name)

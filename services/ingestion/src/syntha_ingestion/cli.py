@@ -32,6 +32,9 @@ def cmd_sample(args: argparse.Namespace) -> int:
             end_date_max=args.end_date_max,
             n=args.n,
             seed=args.seed,
+            categories=args.categories.split(",") if args.categories else None,
+            min_lifetime_volume=args.min_lifetime_volume,
+            from_raw_listing=args.from_raw_listing,
         )
     )
     print(
@@ -142,6 +145,17 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--end-date-max", required=True)
     s.add_argument("--n", type=int, default=600)
     s.add_argument("--seed", type=int, required=True)
+    s.add_argument("--categories", help="comma-separated fee categories, e.g. sports,politics")
+    s.add_argument(
+        "--min-lifetime-volume",
+        type=float,
+        help="pre-filter on FINAL volume (recorded in the manifest; see its warning)",
+    )
+    s.add_argument(
+        "--from-raw-listing",
+        action="store_true",
+        help="reuse the saved Gamma listing for this window instead of re-listing",
+    )
     s.set_defaults(func=cmd_sample)
 
     f = sub.add_parser("fetch", help="fetch metadata, resolutions, prints and prices into raw/")

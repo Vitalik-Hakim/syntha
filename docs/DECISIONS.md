@@ -150,3 +150,62 @@ row and noting the date.
 - **Not in M2 (per PRD milestones):** bootstrap confidence intervals, null-hypothesis
   comparisons and the preset triple-run (M5); near-miss traces (M4); persisting runs to
   `backtest_runs` (M3).
+
+### M3
+
+- **Runs are rows, not files.** `POST /api/backtests` compiles the strategy, pins the latest
+  `dataset_versions` row, reuses or creates a `strategy_versions` row (by name + DSL hash) and
+  inserts a `QUEUED` `backtest_runs` row. Run ids are `BT-YYYYMMDD-NNNNN` from the
+  `backtest_run_seq` sequence (migration 0005). A request against a collection that does not exist
+  is 404; an invalid strategy is 422; no dataset version at all is 409.
+- **Queue.** RQ on Redis, queue `backtests`, 6 h job timeout. The worker is `SimpleWorker` (no
+  fork per job) because forking after NumPy/psycopg imports is unreliable on macOS;
+  `SYNTHA_WORKER_FORK=1` restores the forking worker for Linux deployments. `SYNTHA_QUEUE_MODE=inline`
+  executes in the request, used by the API tests only.
+- **Progress.** The worker publishes `{phase, fraction}` to `syntha:run:<id>:progress` in Redis
+  (throttled to 2/s, 1-day TTL). `GET /api/backtests/{id}/stream` is Server-Sent Events polling that
+  key; the browser falls back to polling `GET /api/backtests/{id}` if the stream drops. Status is
+  always read from Postgres, so a lost Redis key never loses a result.
+- **What is persisted.** Every trade row (including refused signal episodes, with rule traces as
+  jsonb), the full ledger (`bt_ledger`, new in 0005) and the equity curve **at change points
+  only**: a row is kept when cash, positions value, open positions or realized P&L changes, plus
+  the first and last. The curve is a step function between kept rows, so nothing is lost.
+  Underdog on the liquid sports collection: 302,934 bars → 411 stored rows.
+- **Numbers come from the server.** Drawdown is computed over the full stored curve before any
+  downsampling; the chart gets at most `max_points` rows via LTTB, always keeping the first and last
+  rows, peak and lowest equity, and the max-drawdown trough. Metrics, data quality and the manifest are written once at the end of the
+  run. The browser only formats.
+- **Refused trades have no price.** An `UNEXECUTABLE` row (no prints, stale, unknown minimum size)
+  used to store `entry_price = entry_ref_price = 0`, which the blotter displayed as a real quote.
+  Both columns are nullable since migration 0006 and are NULL when no price existed.
+  `REJECTED_MIN_SIZE` rows keep their real quote. The `no_liquidity` golden fixture asserts it.
+- **Web.** Types are generated from the FastAPI OpenAPI document (`packages/contracts/openapi.json`
+  → `apps/web/src/lib/api/schema.d.ts`, `make schemas`), and CI fails on drift in either. The
+  browser only calls its own origin; Next rewrites `/api/*` to FastAPI, so SSE and CSV downloads
+  need no CORS.
+- **`next dev` and `next build` use different output directories** (`.next-dev` and `.next`,
+  overridable with `NEXT_DIST_DIR`). Found in M3: a build while the dev server was running replaced
+  the dev server's chunks and left every page stuck on "Loading…".
+- **Screens (PRD M3).** Simulator wizard (strategy → collection → execution preset → capital), with
+  survivorship, lag-0, small-bankroll and lookback warnings before submission. Results page:
+  disclaimer, honesty warnings, headline stats (greyed when the sample is small), equity and
+  drawdown, cost attribution, exit reasons, why signals didn't fill, data-quality panel with the
+  entry funnel, reproducibility manifest. Trade blotter: status filters with counts, cursor
+  paging, a drawer with the entry clause checklist and the full sizing/execution trace.
+- **Runs report partial execution.** `data_quality.execution_state` is `NO_SIGNALS`, `PARTIAL`
+  (at least 25% of signals never filled) or `COMPLETE`, shown as a badge next to the run status,
+  so a run whose P&L comes from a minority of its signals doesn't look complete.
+- **Survivorship-aware liquid collections.** `ingest-sample --min-lifetime-volume` pre-filters on
+  final volume, which is survivorship bias in general (PRD §5.1 rule 3). It is allowed only with
+  metadata: the collection records `survivorship_free_for_min_volume_asof_at_least`
+  (= `min_lifetime_volume / 0.75`), the API and wizard show the warning, and a run whose
+  `min_volume_asof` is below that level gets a `SURVIVORSHIP BIAS` honesty warning. Basis in
+  docs/DATA_NOTES.md.
+- **Dataset versions stay single-version** (DATA_NOTES "Normalized layer is single-version").
+  Each run pins `dataset_version_id` and its hash in the manifest; re-running an old run after a
+  rebuild needs the same raw inputs. Versioned snapshots are deferred to M6 (reproducibility).
+- **Not in M3:** strategy builder UI and near-miss traces (M4), comparison and robustness (M5),
+  cancelling a queued run, deleting runs. Measured on the liquid sports collection, a run takes
+  ≈ 41 s end to end: ≈ 19 s loading 2.9M bars from Postgres, ≈ 4 s simulating (2.8 s of it
+  formatting 303k equity rows as strings), the rest persisting. Loading is the thing to optimise
+  first.

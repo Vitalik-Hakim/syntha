@@ -100,10 +100,13 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
         version = conn.execute(
             "SELECT id, content_hash FROM dataset_versions ORDER BY built_at DESC LIMIT 1"
         ).fetchone()
+        selection: dict[str, Any] | None = None
         if sel.collection is not None:
             exists = conn.execute(
-                "SELECT 1 FROM collections WHERE name = %s", (sel.collection,)
+                "SELECT definition FROM collections WHERE name = %s", (sel.collection,)
             ).fetchone()
+            if exists is not None:
+                selection = (exists[0] or {}).get("definition")
             if exists is None:
                 raise ValueError(
                     f"collection {sel.collection!r} not found; run `make rebuild-normalized`"
@@ -232,6 +235,7 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
         tokens=tokens,
         fee_schedules=schedules,
         dataset_version_id=None if version is None else str(version[0]),
+        selection=selection,
     )
     return LoadedDataset(
         dataset, SettlementTable(settlements), None if version is None else version[1]

@@ -3,7 +3,7 @@
   "asserts": "Zero prints in bar -> UNEXECUTABLE",
   "derivation": [
     "TRADE_PRINT execution, 10% participation, no fallback. YES token at 0.30 (m0-m1), no trade prints at all.",
-    "Signal m0, execute m1: the m1 bar has no prints -> UNEXECUTABLE (NO_PRINTS), zero size and P&L, recorded as a trade row."
+    "Signal m0, execute m1: the m1 bar has no prints -> UNEXECUTABLE (NO_PRINTS), zero size and P&L, recorded as a trade row. No trade price existed, so entry prices are null (never 0)."
   ],
   "start": "2026-01-01T00:00:00Z",
   "end_minute": null,
@@ -95,6 +95,8 @@
         "shares": "0",
         "net_pnl": "0",
         "reason": "NO_PRINTS",
+        "entry_price": null,
+        "entry_ref_price": null,
         "attempts": 1
       }
     ],

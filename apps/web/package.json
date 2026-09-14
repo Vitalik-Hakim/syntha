@@ -8,12 +8,15 @@
     "build": "next build",
     "start": "next start --port 3100",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "gen:api": "openapi-typescript ../../packages/contracts/openapi.json --default-non-nullable false -o src/lib/api/schema.d.ts"
   },
   "dependencies": {
+    "@tanstack/react-table": "^8.21.3",
     "next": "15.5.25",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "uplot": "^1.6.32"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
@@ -23,6 +26,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "15.5.25",
+    "openapi-typescript": "^7.13.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9"
   }

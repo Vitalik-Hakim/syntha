@@ -10,6 +10,10 @@ dependencies = [
   "syntha-contracts",
   "syntha-engine",
   "syntha-storage",
+  "syntha-worker",
+  "numpy>=2.0",
+  "psycopg[binary]>=3.2",
+  "rq>=1.16",
   "uvicorn[standard]>=0.30",
 ]
 
@@ -17,6 +21,7 @@ dependencies = [
 syntha-contracts = { workspace = true }
 syntha-engine = { workspace = true }
 syntha-storage = { workspace = true }
+syntha-worker = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

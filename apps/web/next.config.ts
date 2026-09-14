@@ -5,6 +5,10 @@ const apiUrl =
   process.env.SYNTHA_API_URL ?? `http://127.0.0.1:${process.env.SYNTHA_API_PORT ?? "8100"}`;
 
 const nextConfig: NextConfig = {
+  // `next dev` and `next build` must not share an output directory: a build while the dev server
+  // is running would replace the chunks the dev server is serving.
+  distDir:
+    process.env.NEXT_DIST_DIR ?? (process.env.NODE_ENV === "production" ? ".next" : ".next-dev"),
   // The browser only ever talks to its own origin; /api/* is proxied to FastAPI.
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${apiUrl}/api/:path*` }];

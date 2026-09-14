@@ -760,22 +760,30 @@ version = "0.0.0"
 source = { editable = "apps/api" }
 dependencies = [
     { name = "fastapi" },
+    { name = "numpy" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-settings" },
     { name = "redis" },
+    { name = "rq" },
     { name = "syntha-contracts" },
     { name = "syntha-engine" },
     { name = "syntha-storage" },
+    { name = "syntha-worker" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "numpy", specifier = ">=2.0" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic-settings", specifier = ">=2.4" },
     { name = "redis", specifier = ">=5.0" },
+    { name = "rq", specifier = ">=1.16" },
     { name = "syntha-contracts", editable = "packages/contracts" },
     { name = "syntha-engine", editable = "packages/engine" },
     { name = "syntha-storage", editable = "packages/storage" },
+    { name = "syntha-worker", editable = "services/worker" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
 

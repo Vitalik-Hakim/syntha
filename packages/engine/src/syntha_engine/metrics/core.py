@@ -106,6 +106,7 @@ def compute_metrics(
     decision_lag_bars: int,
     execution_model: str,
     fee_mode: str,
+    extra_warnings: Sequence[str] = (),
 ) -> dict[str, Any]:
     ending = equity_points[-1].equity if equity_points else starting_capital
     net_profit = ending - starting_capital
@@ -145,7 +146,7 @@ def compute_metrics(
     worst = min(executed, key=lambda t: Decimal(t["net_pnl"]), default=None)
 
     n_trades = len(executed)
-    warnings: list[str] = []
+    warnings: list[str] = list(extra_warnings)
     if decision_lag_bars == 0:
         warnings.append("SAME-BAR FILL — OPTIMISTIC")
     if execution_model == "LAST_PRICE":

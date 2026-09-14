@@ -104,8 +104,9 @@ test: ## Run Python tests (DB tests run when SYNTHA_TEST_DATABASE_URL is set)
 	uv run pytest
 
 .PHONY: schemas
-schemas: ## Regenerate published JSON Schemas from the Pydantic contracts
+schemas: ## Regenerate JSON Schemas, openapi.json and the web client types from the contracts
 	uv run python tools/gen_schemas.py
+	$(WEB) gen:api
 
 .PHONY: build-web
 build-web:

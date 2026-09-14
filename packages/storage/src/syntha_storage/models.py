@@ -26,6 +26,7 @@ from sqlalchemy import (
     Numeric,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -268,6 +269,7 @@ class StrategyVersion(Base):
 
 class BacktestRun(Base):
     __tablename__ = "backtest_runs"
+    __table_args__ = (Index(None, "created_at"),)
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)  # BT-YYYYMMDD-NNNNN
     strategy_version_id: Mapped[uuid.UUID] = mapped_column(
@@ -286,11 +288,15 @@ class BacktestRun(Base):
     error: Mapped[str | None] = mapped_column(Text)
     metrics: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     data_quality: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(TSTZ, server_default=text("now()"))
+    strategy_name: Mapped[str | None] = mapped_column(Text)
+    collection: Mapped[str | None] = mapped_column(Text)
+    manifest: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 
 class BtTrade(Base):
     __tablename__ = "bt_trades"
-    __table_args__ = (Index(None, "run_id", "entry_ts"),)
+    __table_args__ = (Index(None, "run_id", "entry_ts"), UniqueConstraint("run_id", "seq"))
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(Text, ForeignKey("backtest_runs.id", ondelete="CASCADE"))
@@ -300,8 +306,9 @@ class BtTrade(Base):
     side: Mapped[str] = mapped_column(Text)
     signal_ts: Mapped[datetime] = mapped_column(TSTZ)
     entry_ts: Mapped[datetime] = mapped_column(TSTZ)
-    entry_price: Mapped[Decimal] = mapped_column(PRICE)
-    entry_ref_price: Mapped[Decimal] = mapped_column(PRICE)
+    # NULL when the signal was refused before any price existed (e.g. no prints).
+    entry_price: Mapped[Decimal | None] = mapped_column(PRICE)
+    entry_ref_price: Mapped[Decimal | None] = mapped_column(PRICE)
     shares: Mapped[Decimal] = mapped_column(MONEY)
     notional: Mapped[Decimal] = mapped_column(MONEY)
     entry_fee: Mapped[Decimal] = mapped_column(MONEY)
@@ -334,3 +341,19 @@ class BtEquity(Base):
     realized_pnl: Mapped[Decimal] = mapped_column(MONEY)
     unrealized_pnl: Mapped[Decimal] = mapped_column(MONEY)
     exposure_pct: Mapped[Decimal] = mapped_column(Numeric(8, 4))
+
+
+class BtLedger(Base):
+    """Every cash movement of a run (PRD §10.1): the audit trail behind the equity curve."""
+
+    __tablename__ = "bt_ledger"
+
+    run_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("backtest_runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(TSTZ)
+    type: Mapped[str] = mapped_column(Text)
+    amount: Mapped[Decimal] = mapped_column(MONEY)
+    running_cash: Mapped[Decimal] = mapped_column(MONEY)
+    ref: Mapped[str] = mapped_column(Text)

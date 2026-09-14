@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 import zlib
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import ROUND_DOWN, Decimal
@@ -62,6 +63,10 @@ def _q6(x: Decimal) -> str:
     return str(x.quantize(Decimal("0.000001")))
 
 
+def _q6_or_none(x: Decimal | None) -> str | None:
+    return None if x is None else _q6(x)
+
+
 @dataclass(slots=True)
 class EquityRow:
     ts: int
@@ -80,6 +85,10 @@ class Signal:
     trace: dict[str, Any] | None  # entry traces of DSL strategies are built when recorded
     reason: ExitReason | None = None
 
+
+# A run whose signals were this often unexecutable or rejected is PARTIAL: not an error, not a
+# clean success (PRD §19).
+PARTIAL_EXECUTION_SHARE = 0.25
 
 # Refusals that cannot clear while the market exists: no further entry attempts on the token.
 PERMANENT_REFUSALS = frozenset({fills.MIN_SIZE_UNKNOWN, fills.MARKET_CLOSED, fills.END_OF_DATA})
@@ -145,7 +154,10 @@ def run(
     settlement: SettlementTable,
     *,
     strategy: Strategy | None = None,
+    progress: Callable[[str, float], None] | None = None,
 ) -> BacktestResult:
+    """Run a backtest. `progress(phase, fraction)` is called occasionally (phases: prepare, simulate)."""
+    report = progress or (lambda phase, fraction: None)
     step_min = request.bar_interval_minutes
     strat: Strategy = strategy or compile_strategy(request.strategy, step_min)
     universe = request.strategy.universe
@@ -208,7 +220,9 @@ def run(
     ev_tok_parts: list[np.ndarray] = []
     token_names: list[str] = []
     settle_at: dict[int, set[str]] = {}
-    for tok in tokens:
+    for i_tok, tok in enumerate(tokens):
+        if i_tok % 25 == 0:
+            report("prepare", i_tok / max(len(tokens), 1))
         td = dataset.tokens[tok]
         terms = dataset.markets[td.condition_id]
         frame = build_frame(td, terms, grid)
@@ -409,7 +423,12 @@ def run(
 
     # ------------------------------------------------------------ the loop
     k = 0
+    report_every = max(grid.n // 100, 1)
+    next_report = 0
     while k < grid.n:
+        if k >= next_report:
+            report("simulate", k / grid.n)
+            next_report = k + report_every
         if not portfolio.open and not pending:
             j = int(np.searchsorted(ev_k, k, "left"))
             nxt = int(ev_k[j]) if j < ev_k.size else grid.n
@@ -587,6 +606,7 @@ def run(
         portfolio.assert_invariants({}, constraints.max_open_positions)
 
     q.entry_funnel = funnel
+    report("simulate", 1.0)
     return _build_result(
         request, dataset, grid, portfolio, equity_rows, q, strat, len(wanted), len(prepared)
     )
@@ -632,8 +652,9 @@ def _execute_entry(
             "side": side,
             "signal_ts": grid.ts(sig.signal_k),
             "entry_ts": ts,
-            "entry_price": fill_price or ref or ZERO,
-            "entry_ref_price": ref or ZERO,
+            # None when no price existed: a refused signal must not invent a quote.
+            "entry_price": fill_price if fill_price is not None else ref,
+            "entry_ref_price": ref,
             "fill_status": status.value,
             "entry_rule_trace": {"sizing": sizing, "execution": execution},
             "_signal": sig,
@@ -881,8 +902,8 @@ def _build_result(
                 "side": row["side"],
                 "signal_ts": _iso(row["signal_ts"]),
                 "entry_ts": _iso(row["entry_ts"]),
-                "entry_price": _q6(row["entry_price"]),
-                "entry_ref_price": _q6(row["entry_ref_price"]),
+                "entry_price": _q6_or_none(row["entry_price"]),
+                "entry_ref_price": _q6_or_none(row["entry_ref_price"]),
                 "shares": z,
                 "notional": z,
                 "entry_fee": z,
@@ -939,6 +960,17 @@ def _build_result(
         for e in portfolio.ledger
     ]
 
+    bias_warnings: list[str] = []
+    selection = (dataset.selection or {}).get("selection_uses_final_volume")
+    if selection:
+        safe = float(selection["survivorship_free_for_min_volume_asof_at_least"])
+        asof = request.strategy.universe.min_volume_asof
+        if asof is None or asof < safe:
+            bias_warnings.append(
+                f"SURVIVORSHIP BIAS — this collection was pre-filtered on final lifetime volume "
+                f"(>= {selection['min_lifetime_volume']:g}); results are only unbiased for strategies "
+                f"with min_volume_asof >= {safe:g}, but this run uses {asof}."
+            )
     metrics = compute_metrics(
         starting_capital=request.starting_capital,
         equity_points=points,
@@ -946,10 +978,24 @@ def _build_result(
         decision_lag_bars=request.decision_lag_bars,
         execution_model=request.execution.model.value,
         fee_mode=request.fees.mode.value,
+        extra_warnings=bias_warnings,
     )
     c = q.counters
     bars_total = c["bars_total"]
+    generated = c["signals_generated"]
+    unexecuted = c["signals_unexecutable"] + c["signals_rejected_min_size"]
+    unexecuted_share = unexecuted / generated if generated else 0.0
+    if generated == 0:
+        execution_state = "NO_SIGNALS"
+    elif unexecuted_share >= PARTIAL_EXECUTION_SHARE:
+        execution_state = "PARTIAL"
+    else:
+        execution_state = "COMPLETE"
     data_quality = {
+        # PRD §16: generated vs filled is the most informative single ratio in the product.
+        "signal_fill_rate": c["signals_filled"] / generated if generated else None,
+        "unexecuted_signal_share": unexecuted_share,
+        "execution_state": execution_state,
         "dataset_version": dataset.dataset_version_id,
         "coverage": {"start": _iso(grid.start), "end": _iso(grid.ts(grid.n - 1))},
         "bar_interval_minutes": request.bar_interval_minutes,
@@ -994,6 +1040,8 @@ def _build_result(
         "fee_mode": request.fees.mode.value,
         "fee_schedules_applied": sorted(q.fee_labels),
         "fee_warnings": dict(sorted(q.fee_warnings.items())),
+        "selection": dataset.selection,
+        "bias_warnings": bias_warnings,
         "execution_model": request.execution.model.value,
         "decision_lag_bars": request.decision_lag_bars,
         "assumptions": [
