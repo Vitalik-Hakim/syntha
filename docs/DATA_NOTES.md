@@ -292,6 +292,20 @@ be optimised on it before the out-of-sample and robustness tooling (M5).
   was not the price the exit got.
 - *Near misses cluster.* The nearest rule failures are often several bars in the same few markets
   (Spain 3–3 Argentina appears 3 times in the top 15), each one clause a few percent short.
+- *The honesty layer's verdict on Underdog (M5):*
+
+  | Preset | ROI | 90% CI | Trades | Beat permuted | Buy and hold |
+  | --- | --- | --- | --- | --- | --- |
+  | Realistic | −1.84% | −6.3% to +2.5% | 34 | 0% | +12.50% (90% CI −10.4% to +37.8%) |
+  | Optimistic | −8.31% | −18.6% to +2.1% | 42 | 69% | −5.32% |
+  | Conservative | −5.08% | −11.0% to +1.1% | 5 of 144 signals | 49% | +3.82% |
+
+  Under Realistic, all 200 market-shuffled variants did better than the strategy. Its
+  entry condition picked worse-than-random markets at the same moments; part of that is price
+  level, since cheap outcomes cost more to trade. It also beat only 18% of random-entry
+  baselines. The test is weak here: 31 of 70 signals had no other eligible sports market at that
+  bar. Buy-and-hold's +12.5% looks strong but its interval spans −10% to +38%, and it came out
+  −5.3% and +3.8% under the other two presets. No preset shows evidence of edge.
 - *The built-in Underdog carries a `spread_proxy` exit rule*, which is always null on v1 data
   (PRD §4.2), so it can never fire. Checklists show it as "no data".
 

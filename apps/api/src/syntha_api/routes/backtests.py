@@ -7,6 +7,7 @@ import asyncio
 import csv
 import io
 import json
+import uuid
 from collections.abc import AsyncIterator, Iterator
 from datetime import datetime
 from typing import Annotated, Any
@@ -24,6 +25,7 @@ from syntha_api.lttb import equity_indices
 from syntha_api.settings import Settings
 from syntha_contracts.api import (
     CreateBacktestResponse,
+    CreatePresetRunsResponse,
     EquityPoint,
     EquitySeries,
     NearMissDetail,
@@ -39,7 +41,7 @@ from syntha_contracts.api import (
     TradePage,
     TradeRow,
 )
-from syntha_contracts.backtest import BacktestRequest
+from syntha_contracts.backtest import PRESETS, BacktestRequest
 from syntha_contracts.enums import RunStatus
 from syntha_engine.strategy.features import FeatureError
 from syntha_worker import BACKTEST_QUEUE
@@ -48,7 +50,8 @@ from syntha_worker.runs import NoDatasetVersion, create_run, execute_run, progre
 router = APIRouter(prefix="/backtests", tags=["backtests"])
 
 RUN_COLUMNS = """id, status, strategy_name, collection, created_at, started_at, finished_at, config,
-    config_hash, engine_version, dataset_version_id, seed, error, metrics, data_quality, manifest"""
+    config_hash, engine_version, dataset_version_id, seed, error, metrics, data_quality, manifest,
+    honesty, group_id, preset"""
 
 TRADE_COLUMNS = """t.seq, t.fill_status, t.condition_id, t.clob_token_id, t.side, t.signal_ts, t.entry_ts,
     t.entry_ref_price, t.entry_price, t.shares, t.notional, t.entry_fee, t.exit_ts, t.exit_price, t.exit_fee,
@@ -62,7 +65,8 @@ def _num(value: Any) -> str | None:
 
 def _summary(row: tuple[Any, ...]) -> RunSummary:
     (run_id, st, strategy_name, collection, created, started, finished, config, *_rest) = row
-    metrics, dq = row[13] or {}, row[14] or {}
+    metrics, dq, honesty = row[13] or {}, row[14] or {}, row[16] or {}
+    summary = honesty.get("summary") or {}
     return RunSummary(
         id=run_id,
         status=RunStatus(st),
@@ -78,6 +82,11 @@ def _summary(row: tuple[Any, ...]) -> RunSummary:
         signals_generated=dq.get("signals_generated"),
         signals_filled=dq.get("signals_filled"),
         warnings=metrics.get("warnings", []),
+        preset=row[18],
+        group_id=None if row[17] is None else str(row[17]),
+        roi_ci90=summary.get("roi_ci90"),
+        permutation_percentile=summary.get("permutation_percentile"),
+        buy_and_hold_roi=summary.get("buy_and_hold_roi"),
     )
 
 
@@ -103,18 +112,74 @@ def _fetch_run(conn: psycopg.Connection[Any], run_id: str) -> tuple[Any, ...]:
     return row  # type: ignore[no-any-return]
 
 
+PRESET_ORDER = PRESETS  # REALISTIC first: the default view (PRD §11.6)
+
+
+def _group(conn: psycopg.Connection[Any], group_id: Any) -> list[RunSummary]:
+    if group_id is None:
+        return []
+    rows = conn.execute(
+        f"SELECT {RUN_COLUMNS} FROM backtest_runs WHERE group_id = %s", (group_id,)
+    ).fetchall()
+    members = [_summary(r) for r in rows]
+    return sorted(
+        members, key=lambda m: PRESET_ORDER.index(m.preset) if m.preset in PRESET_ORDER else 9
+    )
+
+
+def _check_collection(conn: psycopg.Connection[Any], request: BacktestRequest) -> None:
+    if request.dataset.collection is None:
+        return
+    found = conn.execute(
+        "SELECT 1 FROM collections WHERE name = %s", (request.dataset.collection,)
+    ).fetchone()
+    if found is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, f"collection {request.dataset.collection!r} not found"
+        )
+
+
+def _start(settings: Settings, run_id: str) -> RunStatus:
+    if settings.queue_mode == "inline":
+        return execute_run(run_id, settings.plain_database_url)
+    from rq import Queue
+
+    queue = Queue(BACKTEST_QUEUE, connection=redis.Redis.from_url(settings.redis_url))
+    queue.enqueue("syntha_worker.runs.rq_job", run_id, job_timeout=6 * 3600, result_ttl=86_400)
+    return RunStatus.QUEUED
+
+
+@router.post("/presets", status_code=status.HTTP_201_CREATED)
+def create_preset_backtests(
+    request: BacktestRequest, conn: ConnDep, settings: SettingsDep
+) -> CreatePresetRunsResponse:
+    """PRD §11.6 "Run all three": the request under each scenario preset, as one group. The
+    request's own execution and fee settings are replaced."""
+    _check_collection(conn, request)
+    group_id = uuid.uuid4()
+    run_ids: list[tuple[str, str]] = []
+    try:
+        for preset in PRESET_ORDER:
+            run_ids.append((preset, create_run(conn, request.with_preset(preset), group_id)))
+    except FeatureError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    except NoDatasetVersion as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    conn.commit()
+    return CreatePresetRunsResponse(
+        group_id=str(group_id),
+        runs=[
+            CreateBacktestResponse(run_id=run_id, status=_start(settings, run_id), preset=preset)
+            for preset, run_id in run_ids
+        ],
+    )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_backtest(
     request: BacktestRequest, conn: ConnDep, settings: SettingsDep
 ) -> CreateBacktestResponse:
-    if request.dataset.collection is not None:
-        found = conn.execute(
-            "SELECT 1 FROM collections WHERE name = %s", (request.dataset.collection,)
-        ).fetchone()
-        if found is None:
-            raise HTTPException(
-                status.HTTP_404_NOT_FOUND, f"collection {request.dataset.collection!r} not found"
-            )
+    _check_collection(conn, request)
     try:
         run_id = create_run(conn, request)
     except FeatureError as exc:
@@ -122,15 +187,9 @@ def create_backtest(
     except NoDatasetVersion as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     conn.commit()
-
-    if settings.queue_mode == "inline":
-        final = execute_run(run_id, settings.plain_database_url)
-        return CreateBacktestResponse(run_id=run_id, status=final)
-    from rq import Queue
-
-    queue = Queue(BACKTEST_QUEUE, connection=redis.Redis.from_url(settings.redis_url))
-    queue.enqueue("syntha_worker.runs.rq_job", run_id, job_timeout=6 * 3600, result_ttl=86_400)
-    return CreateBacktestResponse(run_id=run_id, status=RunStatus.QUEUED)
+    return CreateBacktestResponse(
+        run_id=run_id, status=_start(settings, run_id), preset=request.preset_name()
+    )
 
 
 @router.get("")
@@ -159,6 +218,8 @@ def get_backtest(run_id: str, conn: ConnDep, settings: SettingsDep) -> RunDetail
         metrics=row[13],
         data_quality=row[14] or None,
         manifest=row[15],
+        honesty=row[16],
+        group=_group(conn, row[17]),
     )
 
 

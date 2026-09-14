@@ -84,6 +84,9 @@ def test_run_end_to_end(client: TestClient) -> None:
     assert detail["metrics"]["n_trades"] == 1
     assert detail["data_quality"]["signals_generated"] == 1
     assert detail["config_hash"] and detail["dataset_version_id"]
+    assert detail["preset"] == "CUSTOM" and detail["group"] == []
+    assert detail["honesty"]["bootstrap"]["n_trades"] == 1
+    assert detail["honesty"]["bootstrap"]["low_sample"] is True
 
     runs = client.get("/api/backtests").json()["runs"]
     assert runs[0]["id"] == run_id and runs[0]["n_trades"] == 1
@@ -168,6 +171,39 @@ def test_near_misses(client: TestClient) -> None:
     assert page["counts_by_blocker"] == {"below_min_volume_asof": 1}
     detail = client.get(f"/api/backtests/{blocked}").json()
     assert detail["data_quality"]["near_misses"]["found"]["BLOCKED_BY_UNIVERSE"] == 1
+
+
+def test_run_all_three_presets_and_honesty(client: TestClient) -> None:
+    body = {
+        **REQUEST,
+        "honesty": {"bootstrap_iterations": 500, "permutations": 20, "random_baselines": 5},
+    }
+    created = client.post("/api/backtests/presets", json=body)
+    assert created.status_code == 201, created.text
+    runs = created.json()["runs"]
+    assert [r["preset"] for r in runs] == ["REALISTIC", "OPTIMISTIC", "CONSERVATIVE"]
+    assert all(r["status"] == "DONE" for r in runs)
+
+    detail = client.get(f"/api/backtests/{runs[0]['run_id']}").json()
+    assert detail["preset"] == "REALISTIC" and detail["group_id"] == created.json()["group_id"]
+    assert [g["preset"] for g in detail["group"]] == ["REALISTIC", "OPTIMISTIC", "CONSERVATIVE"]
+    assert detail["config"]["execution"]["model"] == "TRADE_PRINT"
+    optimistic = client.get(f"/api/backtests/{runs[1]['run_id']}").json()
+    assert optimistic["config"]["execution"]["model"] == "LAST_PRICE"
+
+    honesty = detail["honesty"]
+    assert set(honesty) >= {
+        "bootstrap",
+        "permutation",
+        "random_baseline",
+        "buy_and_hold",
+        "summary",
+    }
+    assert honesty["permutation"]["iterations"] in (0, 20)
+    assert honesty["summary"]["headline"]
+    assert honesty["buy_and_hold"]["strategy"] == "Buy and Hold to Resolution"
+    listed = {r["id"]: r for r in client.get("/api/backtests").json()["runs"]}
+    assert listed[runs[2]["run_id"]]["preset"] == "CONSERVATIVE"
 
 
 def test_errors(client: TestClient) -> None:

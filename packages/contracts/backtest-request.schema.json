@@ -366,6 +366,42 @@
       "title": "FeeMode",
       "type": "string"
     },
+    "HonestyConfig": {
+      "additionalProperties": false,
+      "description": "The statistical honesty layer (PRD §15), run with every backtest. Iteration counts are part\nof the config hash: the tests are seeded from the request's seed, so they are reproducible.",
+      "properties": {
+        "bootstrap_iterations": {
+          "default": 10000,
+          "maximum": 100000,
+          "minimum": 0,
+          "title": "Bootstrap Iterations",
+          "type": "integer"
+        },
+        "buy_and_hold": {
+          "default": true,
+          "title": "Buy And Hold",
+          "type": "boolean"
+        },
+        "permutations": {
+          "default": 200,
+          "description": "Market-shuffle permutation test iterations",
+          "maximum": 5000,
+          "minimum": 0,
+          "title": "Permutations",
+          "type": "integer"
+        },
+        "random_baselines": {
+          "default": 50,
+          "description": "Random-entry baseline simulations",
+          "maximum": 5000,
+          "minimum": 0,
+          "title": "Random Baselines",
+          "type": "integer"
+        }
+      },
+      "title": "HonestyConfig",
+      "type": "object"
+    },
     "MaxHold": {
       "additionalProperties": false,
       "properties": {
@@ -708,6 +744,9 @@
     },
     "fees": {
       "$ref": "#/$defs/FeeConfig"
+    },
+    "honesty": {
+      "$ref": "#/$defs/HonestyConfig"
     },
     "max_stale_minutes": {
       "default": 60,

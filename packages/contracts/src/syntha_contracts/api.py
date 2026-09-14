@@ -68,6 +68,14 @@ class DatasetVersionInfo(BaseModel):
 class CreateBacktestResponse(BaseModel):
     run_id: str
     status: RunStatus
+    preset: str | None = None
+
+
+class CreatePresetRunsResponse(BaseModel):
+    """PRD §11.6 "Run all three": one run per scenario preset, sharing a group."""
+
+    group_id: str
+    runs: list[CreateBacktestResponse]
 
 
 class RunProgress(BaseModel):
@@ -91,6 +99,15 @@ class RunSummary(BaseModel):
     signals_generated: int | None
     signals_filled: int | None
     warnings: list[str] = Field(default_factory=list)
+    preset: str | None = Field(
+        default=None, description="OPTIMISTIC | REALISTIC | CONSERVATIVE | CUSTOM"
+    )
+    group_id: str | None = None
+    roi_ci90: list[float] | None = Field(default=None, description="Bootstrap 90% CI of ROI")
+    permutation_percentile: float | None = Field(
+        default=None, description="Percent of permuted variants this run beat (PRD §15.3)"
+    )
+    buy_and_hold_roi: float | None = None
 
 
 class RunDetail(RunSummary):
@@ -104,6 +121,13 @@ class RunDetail(RunSummary):
     metrics: dict[str, Any] | None
     data_quality: dict[str, Any] | None
     manifest: dict[str, Any] | None
+    honesty: dict[str, Any] | None = Field(
+        default=None, description="Bootstrap, permutation test, random baseline, buy-and-hold"
+    )
+    group: list[RunSummary] = Field(
+        default_factory=list,
+        description="The run's preset group, in REALISTIC, OPTIMISTIC, CONSERVATIVE order",
+    )
 
 
 class RunList(BaseModel):

@@ -20,9 +20,12 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from syntha_contracts.backtest import BacktestRequest
+from syntha_contracts.builtins import builtin_strategy
 from syntha_contracts.enums import RunStatus
 from syntha_engine import ENGINE_VERSION
-from syntha_engine.runner import BacktestResult, run
+from syntha_engine.data import Dataset, SettlementTable
+from syntha_engine.honesty import compute_honesty
+from syntha_engine.runner import BacktestResult, prepare, simulate
 from syntha_engine.strategy.compiler import compile_strategy
 from syntha_worker.loader import load_dataset
 
@@ -98,8 +101,11 @@ def _strategy_version(conn: psycopg.Connection[Any], request: BacktestRequest) -
     return version_id
 
 
-def create_run(conn: psycopg.Connection[Any], request: BacktestRequest) -> str:
-    """Validate and insert a QUEUED run. Returns its id (BT-YYYYMMDD-NNNNN)."""
+def create_run(
+    conn: psycopg.Connection[Any], request: BacktestRequest, group_id: uuid.UUID | None = None
+) -> str:
+    """Validate and insert a QUEUED run. Returns its id (BT-YYYYMMDD-NNNNN). Runs of one "run all
+    three presets" request share `group_id`."""
     compile_strategy(request.strategy, request.bar_interval_minutes)  # raises on invalid features
     dataset = conn.execute(
         "SELECT id FROM dataset_versions ORDER BY built_at DESC LIMIT 1"
@@ -111,8 +117,8 @@ def create_run(conn: psycopg.Connection[Any], request: BacktestRequest) -> str:
     run_id = f"BT-{datetime.now(UTC):%Y%m%d}-{seq:05d}"
     conn.execute(
         """INSERT INTO backtest_runs (id, strategy_version_id, dataset_version_id, config, config_hash,
-             engine_version, seed, status, data_quality, strategy_name, collection)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '{}'::jsonb, %s, %s)""",
+             engine_version, seed, status, data_quality, strategy_name, collection, group_id, preset)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '{}'::jsonb, %s, %s, %s, %s)""",
         (
             run_id,
             version_id,
@@ -124,6 +130,8 @@ def create_run(conn: psycopg.Connection[Any], request: BacktestRequest) -> str:
             RunStatus.QUEUED.value,
             request.strategy.name,
             request.dataset.collection,
+            group_id,
+            request.preset_name(),
         ),
     )
     return run_id
@@ -240,6 +248,25 @@ def persist_result(conn: psycopg.Connection[Any], run_id: str, result: BacktestR
 # ------------------------------------------------------------------ execute
 
 
+def backtest_with_honesty(
+    request: BacktestRequest,
+    dataset: Dataset,
+    settlement: SettlementTable,
+    progress: Callable[[str, float], None] | None = None,
+) -> tuple[BacktestResult, dict[str, Any]]:
+    """The backtest, then its null-hypothesis tests over the same preparation (PRD §15)."""
+    prep = prepare(request, dataset, settlement, progress=progress)
+    result = simulate(prep, progress=progress)
+    assert isinstance(result, BacktestResult)
+    honesty = compute_honesty(
+        prep,
+        result,
+        buy_and_hold_dsl=builtin_strategy("buy_and_hold_to_resolution"),
+        progress=progress,
+    )
+    return result, honesty
+
+
 def execute_run(
     run_id: str, db_url: str | None = None, on_progress: Callable[[str, float], None] | None = None
 ) -> RunStatus:
@@ -264,18 +291,21 @@ def execute_run(
         request = BacktestRequest.model_validate(row[0])
         report("load", 0.0)
         loaded = load_dataset(url, request)
-        result = run(request, loaded.dataset, loaded.settlement, progress=report)
+        result, honesty = backtest_with_honesty(
+            request, loaded.dataset, loaded.settlement, progress=report
+        )
         report("persist", 0.0)
         result.manifest["run_id"] = run_id
         with psycopg.connect(url) as conn, conn.transaction():
             persist_result(conn, run_id, result)
             conn.execute(
                 "UPDATE backtest_runs SET status = 'DONE', finished_at = now(), metrics = %s, "
-                "data_quality = %s, manifest = %s WHERE id = %s",
+                "data_quality = %s, manifest = %s, honesty = %s WHERE id = %s",
                 (
                     Jsonb(json.loads(json.dumps(result.metrics, default=str))),
                     Jsonb(json.loads(json.dumps(result.data_quality, default=str))),
                     Jsonb(result.manifest),
+                    Jsonb(json.loads(json.dumps(honesty, default=str))),
                     run_id,
                 ),
             )

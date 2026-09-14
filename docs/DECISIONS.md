@@ -267,3 +267,53 @@ row and noting the date.
   `july-2026-liquid-sports-300` (3 FILLED, 31 PARTIAL, 31 UNEXECUTABLE, 5 REJECTED_MIN_SIZE). Each
   replay rendered a chart and a checklist with one row per check in the stored trace, and the
   browser logged no errors.
+
+### M5
+
+- **The honesty layer runs with every backtest** (`syntha_engine.honesty`, stored in
+  `backtest_runs.honesty`, migration 0008). Iteration counts are in `BacktestRequest.honesty`,
+  so they are part of the config hash. Every random draw is seeded from the request seed with a
+  separate stream per test, so reruns reproduce it exactly.
+  - **Bootstrap (§15.2):** 10,000 resamples of executed trades' net P&L. Reports ROI 90% CI,
+    expectancy 95% CI and the share of resamples losing money. ROI is Σ net P&L / starting
+    capital, which ignores path-dependent sizing; the output says so. It is flagged as
+    unreliable under 30 trades.
+  - **Permutation test (§15.3):** 200 variants. The PRD's "hold entry times fixed, shuffle which
+    market each signal maps to (within category)" is implemented on **signal episodes**. Each
+    episode keeps its start bar and retry window and moves to a random market of the same
+    category that passed the universe filters at that bar. Variants go through the same
+    constraints, sizing, execution, fees and exits. The output also reports how many episodes
+    had no other eligible market, since a test with few alternatives is weak.
+  - **Random-entry baseline (§15.3):** 50 variants with the same number of episodes and retry
+    windows, placed uniformly over every eligible (bar, market). This fixes the entry *rate*
+    exactly, instead of the built-in's per-bar probability.
+  - **Buy and hold (§8.3):** the built-in on the strategy's universe, with the same execution,
+    fees and capital, and its own sizing and constraints. It gets its own bootstrap interval,
+    because a benchmark is noisy too. Its daily equity is overlaid on the equity chart.
+  - **Headline:** "Your strategy beat N% of permuted variants", with "Anything under ~95% is not
+    evidence of edge" below 95. Ties count half.
+- **Shared preparation, lean simulation.** `runner.run` is now `simulate(prepare(...))`.
+  `prepare` builds frames, features, eligibility gates and candidates once. `simulate(prep,
+  forced=...)` runs imposed entry candidates without traces, trade rows or equity rows and
+  returns a `LeanOutcome`. The test that makes this trustworthy: replaying the strategy's own
+  episodes through the lean path reproduces the real run's ROI and fill count exactly, on the
+  planted-edge fixture, on the synthetic benchmark and on the real Underdog run.
+  A planted-edge test proves the permutation test can find an edge (≥ 95th percentile).
+- **Cost.** On `july-2026-liquid-sports-300` each null variant takes about 30 ms: 250 variants plus
+  buy-and-hold add about 12 s to a run (CLI total 34 s including a 19 s data load). On the dense
+  synthetic benchmark (1,000 markets × 90 days, 77k episodes) a variant takes about 6 s, so the
+  defaults would add about 25 minutes. The time is spread across the Python event loop with no
+  single hotspot. Lower `honesty.permutations` for exploratory runs of that size; parallelising
+  variants across processes is the follow-up.
+- **Scenario presets (§11.6).** `POST /api/backtests/presets` creates the request under
+  Realistic, Optimistic and Conservative as one group (`backtest_runs.group_id`, `preset`).
+  "Run all three presets" is the wizard's primary button, and Optimistic cannot be submitted
+  alone. Every grouped result shows the three side by side, Realistic first. A lone Optimistic
+  run (possible through the API) shows a banner offering the other two. Every run records its
+  preset, or CUSTOM.
+- **Wording correction found on real data.** Optimistic is optimistic about *fills*, not
+  necessarily about P&L. Underdog lost more under Optimistic (−8.31%) than under Realistic
+  (−1.84%), because filling every signal of a losing rule adds more losing trades. The UI no
+  longer calls it an upper bound.
+- **Also:** an infinite profit factor adds a low-sample warning (§12.3). `ENGINE_VERSION` is
+  0.5.0. Runs from before 0.5.0 show "honesty layer not computed; re-run".

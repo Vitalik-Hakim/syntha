@@ -22,10 +22,10 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from syntha_contracts.backtest import BacktestRequest, ExecutionConfig, FeeConfig
+from syntha_contracts.backtest import BacktestRequest, ExecutionConfig, FeeConfig, HonestyConfig
 from syntha_contracts.builtins import BUILTIN_STRATEGY_FILES, builtin_strategy
 from syntha_contracts.strategy import StrategyDSL
-from syntha_engine.runner import BacktestResult, run
+from syntha_engine.runner import BacktestResult
 from syntha_engine.serialize import canonical_json, result_document
 from syntha_engine.strategy.compiler import compile_strategy
 from syntha_engine.strategy.features import FeatureError
@@ -69,8 +69,15 @@ def _write_csv(path: Path, rows: list[dict[str, Any]], columns: list[str]) -> No
         w.writerows(rows)
 
 
-def write_outputs(out: Path, request: BacktestRequest, result: BacktestResult) -> None:
+def write_outputs(
+    out: Path,
+    request: BacktestRequest,
+    result: BacktestResult,
+    honesty: dict[str, Any] | None = None,
+) -> None:
     out.mkdir(parents=True, exist_ok=True)
+    if honesty is not None:
+        (out / "honesty.json").write_text(json.dumps(honesty, indent=2, default=str) + "\n")
     doc = result_document(result)
     (out / "request.json").write_text(json.dumps(request.model_dump(mode="json"), indent=2) + "\n")
     for name in ("manifest", "metrics", "data_quality"):
@@ -92,7 +99,47 @@ def fmt(x: Any) -> str:
     return f"{x:+.2%}" if isinstance(x, float) else str(x)
 
 
-def _summary(request: BacktestRequest, result: BacktestResult, elapsed: float, out: Path) -> str:
+def _pct_range(pair: list[float] | None) -> str:
+    return "—" if pair is None else f"{pair[0]:+.2%} to {pair[1]:+.2%}"
+
+
+def _honesty_lines(h: dict[str, Any]) -> list[str]:
+    s, boot, perm, rand, bh = (
+        h["summary"],
+        h["bootstrap"],
+        h["permutation"],
+        h["random_baseline"],
+        h["buy_and_hold"],
+    )
+    lines = [
+        "",
+        f"honesty         {s['headline']} {s['reading'] or ''}".rstrip(),
+        f"  ROI 90% CI    {_pct_range(boot['roi_ci90'])} ({boot['iterations']} bootstrap resamples"
+        f"{', low sample' if boot['low_sample'] else ''})",
+        f"  permutation   {perm['iterations']} variants · median ROI "
+        f"{fmt((perm['roi_quantiles'] or {}).get('p50'))} · beat {fmt_pct(perm['percentile'])}",
+        f"  random entry  {rand['iterations']} variants · median ROI "
+        f"{fmt((rand['roi_quantiles'] or {}).get('p50'))} · beat {fmt_pct(rand['percentile'])}",
+    ]
+    if bh is not None:
+        lines.append(
+            f"  buy and hold  ROI {fmt(bh['roi'])} (90% CI {_pct_range(bh['bootstrap']['roi_ci90'])}) "
+            f"· {bh['n_trades']} trades"
+        )
+    return lines
+
+
+def fmt_pct(x: float | None) -> str:
+    return "—" if x is None else f"{x:.0f}%"
+
+
+def _summary(
+    request: BacktestRequest,
+    result: BacktestResult,
+    elapsed: float,
+    out: Path,
+    honesty: dict[str, Any] | None = None,
+) -> str:
     m, dq = result.metrics, result.data_quality
     win_rate = "—" if m["win_rate"] is None else f"{m['win_rate']:.1%}"
     lines = [DISCLAIMER, ""]
@@ -116,6 +163,7 @@ def _summary(request: BacktestRequest, result: BacktestResult, elapsed: float, o
         f"costs           gross {m['cost_attribution']['gross_pnl']:+.2f} · fees -{m['cost_attribution']['fees']:.2f}"
         f" · slippage -{m['cost_attribution']['slippage']:.2f} · net {m['cost_attribution']['net_pnl']:+.2f}",
         f"exit reasons    {m['exit_reasons']}",
+        *(_honesty_lines(honesty) if honesty else []),
         "",
         f"config hash     {result.manifest['config_hash']}",
         f"dataset version {result.manifest['dataset_version_id']}",
@@ -151,7 +199,17 @@ def cmd_run(args: argparse.Namespace) -> int:
         loaded = load_dataset(url, request)
         dataset, settlement = loaded.dataset, loaded.settlement
     t_load = time.perf_counter()
-    result = run(request, dataset, settlement)
+    if args.no_honesty:
+        request = request.model_copy(
+            update={
+                "honesty": HonestyConfig(
+                    bootstrap_iterations=0, permutations=0, random_baselines=0, buy_and_hold=False
+                )
+            }
+        )
+    from syntha_worker.runs import backtest_with_honesty
+
+    result, honesty = backtest_with_honesty(request, dataset, settlement)
     t_run = time.perf_counter()
 
     run_id = f"BT-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}-{request.config_hash()[:8]}"
@@ -165,8 +223,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         "load": round(t_load - t0, 3),
         "engine": round(t_run - t_load, 3),
     }
-    write_outputs(out, request, result)
-    print(_summary(request, result, t_run - t0, out))
+    write_outputs(out, request, result, honesty)
+    print(_summary(request, result, t_run - t0, out, honesty))
     return 0
 
 
@@ -226,6 +284,11 @@ def main(argv: list[str] | None = None) -> int:
         help="override execution and fee settings with a PRD §11.6 preset",
     )
     r.add_argument("--out", help="output directory (default data/runs/<run id>)")
+    r.add_argument(
+        "--no-honesty",
+        action="store_true",
+        help="skip the bootstrap, permutation, random-entry and buy-and-hold tests (PRD §15)",
+    )
     r.add_argument("--db", help="database URL (default SYNTHA_DATABASE_URL)")
     r.set_defaults(func=cmd_run)
     v = sub.add_parser("validate", help="validate and compile a strategy DSL document")

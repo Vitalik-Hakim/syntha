@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { EquityChart } from "@/components/equity-chart";
+import { ciText, HonestyHeadline, HonestyPanel, ScenarioTable } from "@/components/honesty";
 import { Badge, Disclaimer, EmptyState, ErrorState, Loading, Section, Signed, Stat, Warning } from "@/components/ui";
-import { apiGet, type EquitySeries, type RunDetail } from "@/lib/api/client";
+import { apiGet, apiPost, type EquitySeries, type RunDetail } from "@/lib/api/client";
 import { count, duration, pct, ts, usd } from "@/lib/format";
 
 type Metrics = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -158,15 +160,25 @@ function Results({ run, metrics: m, dq, equity }: { run: RunDetail; metrics: Met
   const warnings: string[] = m.warnings ?? [];
   const lowSample = Boolean(m.low_sample);
   const costs = m.cost_attribution ?? {};
+  const honesty = run.honesty as Metrics | null | undefined;
+  const boot = honesty?.bootstrap ?? {};
   return (
     <div className="space-y-5">
+      {run.preset === "OPTIMISTIC" && !(run.group ?? []).length ? <OptimisticAlone run={run} /> : null}
+      <HonestyHeadline honesty={honesty} />
       {warnings.length ? <div className="space-y-2">{warnings.map((w) => <Warning key={w}>{w}</Warning>)}</div> : null}
+      <ScenarioTable run={run} />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
         <Stat label="Net P&L" muted={lowSample} title={m.definitions?.net_profit}>
           <Signed value={m.net_profit}>{usd(m.net_profit, { signed: true })}</Signed>
         </Stat>
-        <Stat label="ROI" muted={lowSample} title={m.definitions?.roi} sub={m.cagr == null ? m.cagr_note : `CAGR ${pct(m.cagr, { signed: true })}`}>
+        <Stat
+          label="ROI"
+          muted={lowSample}
+          title={`${m.definitions?.roi}. 90% CI from ${boot.iterations ?? 0} bootstrap resamples of the trades (PRD §15.2).`}
+          sub={<>{boot.roi_ci90 ? <span className="block">90% CI {ciText(boot.roi_ci90)}</span> : null}{m.cagr == null ? m.cagr_note : `CAGR ${pct(m.cagr, { signed: true })}`}</>}
+        >
           <Signed value={m.roi}>{pct(m.roi, { signed: true })}</Signed>
         </Stat>
         <Stat label="Max drawdown" muted={lowSample} title={m.definitions?.max_drawdown} sub={`${usd(m.max_drawdown?.usd)} · ${duration(m.max_drawdown?.duration_seconds)}`}>
@@ -191,7 +203,7 @@ function Results({ run, metrics: m, dq, equity }: { run: RunDetail; metrics: Met
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <Section title="Equity">
           {lowSample ? <p className="mb-2 text-xs font-medium text-warn">Too few trades to distinguish this from luck.</p> : null}
-          {equity ? <EquityChart series={equity} /> : <Loading label="Loading equity curve…" />}
+          {equity ? <EquityChart series={equity} benchmark={honesty?.buy_and_hold?.equity_daily} /> : <Loading label="Loading equity curve…" />}
         </Section>
         <Section title="Cost attribution" aside={<span className="text-[11px] text-ink-faint">never collapsed</span>}>
           <table className="num w-full text-sm">
@@ -210,6 +222,9 @@ function Results({ run, metrics: m, dq, equity }: { run: RunDetail; metrics: Met
           </p>
           <dl className="mt-3 space-y-1 text-xs text-ink-muted">
             <Row label="Expectancy / trade" value={usd(m.expectancy, { signed: true })} />
+            {boot.expectancy_ci95 ? (
+              <Row label="95% CI" value={`${usd(boot.expectancy_ci95[0], { signed: true })} to ${usd(boot.expectancy_ci95[1], { signed: true })}`} />
+            ) : null}
             <Row label="Worst trade" value={m.worst_trade ? usd(m.worst_trade.net_pnl, { signed: true }) : "—"} />
             <Row label="Max consecutive losses" value={count(m.max_consecutive_losses)} />
             <Row label="Median holding" value={duration(m.holding_seconds_median)} />
@@ -231,8 +246,38 @@ function Results({ run, metrics: m, dq, equity }: { run: RunDetail; metrics: Met
         </Section>
       </div>
 
+      {honesty ? <HonestyPanel honesty={honesty} /> : null}
       <DataQuality dq={dq} runId={run.id} />
       <Manifest run={run} />
+    </div>
+  );
+}
+
+/** PRD §11.6: never show Optimistic alone. */
+function OptimisticAlone({ run }: { run: RunDetail }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function runAll() {
+    setBusy(true);
+    try {
+      const group = await apiPost<{ runs: { run_id: string; preset: string | null }[] }>("/backtests/presets", run.config);
+      router.push(`/runs/${group.runs.find((r) => r.preset === "REALISTIC")?.run_id ?? group.runs[0]!.run_id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="border border-dashed border-warn px-4 py-3">
+      <p className="text-sm font-semibold text-warn">Optimistic assumptions, shown alone.</p>
+      <p className="mt-1 text-sm text-ink-muted">
+        Every signal fills at the sampled price with unlimited size. That is optimistic about execution, not a forecast of P&L: read it next to Realistic and Conservative.
+      </p>
+      <button type="button" disabled={busy} onClick={() => void runAll()} className="mt-2 border border-accent bg-accent/10 px-3 py-1 text-sm text-ink hover:bg-accent/20 disabled:opacity-50">
+        {busy ? "Queuing…" : "Run all three presets"}
+      </button>
+      {error ? <p className="mt-2 text-xs text-loss">{error}</p> : null}
     </div>
   );
 }

@@ -15,6 +15,7 @@ already closed. That is the market's reality, not information handed to the stra
 
 from __future__ import annotations
 
+import copy
 import math
 import zlib
 from collections import Counter
@@ -129,6 +130,31 @@ class BacktestResult:
     metrics: dict[str, Any]
     data_quality: dict[str, Any]
     near_misses: list[dict[str, Any]] = field(default_factory=list)
+    # (start bar, last candidate bar, token) of every entry signal episode, for the null tests
+    episodes: list[tuple[int, int, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ForcedSignals:
+    """Entry candidates imposed instead of the strategy's own (PRD §15.3 null models). Each
+    (bar, token index into `Preparation.token_names`) is a bar at which an entry is attempted,
+    subject to the same constraints, sizing, execution and exits."""
+
+    ev_k: np.ndarray
+    ev_tok: np.ndarray
+    label: str
+
+
+@dataclass(frozen=True)
+class LeanOutcome:
+    """What a null-model simulation reports: no traces, trade rows or equity curve."""
+
+    ending_equity: Decimal
+    net_profit: Decimal
+    roi: float
+    n_trades: int
+    signals_generated: int
+    signals_filled: int
 
 
 @dataclass
@@ -141,6 +167,7 @@ class _Prepared:
     near: list[tuple[str, int, float | None]] = field(
         default_factory=list
     )  # (kind, local i, score)
+    gate: np.ndarray | None = None  # eligible bars (universe filters passed), local
 
 
 @dataclass
@@ -155,6 +182,7 @@ class _Quality:
     markets_dropped: list[dict[str, str]] = field(default_factory=list)
     entry_funnel: Counter[str] = field(default_factory=Counter)
     near_misses: dict[str, Any] = field(default_factory=dict)
+    episodes: list[tuple[int, int, str]] = field(default_factory=list)
 
 
 def _token_for_side(dataset: Dataset, condition_id: str, side: Side) -> str | None:
@@ -163,6 +191,28 @@ def _token_for_side(dataset: Dataset, condition_id: str, side: Side) -> str | No
         if t.condition_id == condition_id and t.outcome_index == idx:
             return t.clob_token_id
     return None
+
+
+@dataclass
+class Preparation:
+    """Everything computed once per (request, dataset): frames, features, eligibility gates and the
+    strategy's own entry candidates. Several simulations can share one (PRD §15.3)."""
+
+    request: BacktestRequest
+    dataset: Dataset
+    settlement: SettlementTable
+    strat: Strategy
+    grid: Grid
+    prepared: dict[str, _Prepared]
+    token_names: list[str]
+    ev_k: np.ndarray
+    ev_tok: np.ndarray
+    settle_at: dict[int, set[str]]
+    funnel: Counter[str]
+    quality: _Quality
+    n_wanted: int
+    near_misses_enabled: bool
+    near_miss_separation: int
 
 
 def run(
@@ -174,12 +224,24 @@ def run(
     progress: Callable[[str, float], None] | None = None,
 ) -> BacktestResult:
     """Run a backtest. `progress(phase, fraction)` is called occasionally (phases: prepare, simulate)."""
+    prep = prepare(request, dataset, settlement, strategy=strategy, progress=progress)
+    result = simulate(prep, progress=progress)
+    assert isinstance(result, BacktestResult)
+    return result
+
+
+def prepare(
+    request: BacktestRequest,
+    dataset: Dataset,
+    settlement: SettlementTable,
+    *,
+    strategy: Strategy | None = None,
+    progress: Callable[[str, float], None] | None = None,
+) -> Preparation:
     report = progress or (lambda phase, fraction: None)
     step_min = request.bar_interval_minutes
     strat: Strategy = strategy or compile_strategy(request.strategy, step_min)
     universe = request.strategy.universe
-    constraints = request.strategy.constraints
-    lag = request.decision_lag_bars
     q = _Quality()
 
     # ------------------------------------------------------------ universe (static part)
@@ -233,7 +295,6 @@ def run(
     # ------------------------------------------------------------ precompute (vectorized)
     prepared: dict[str, _Prepared] = {}
     near_misses_enabled = isinstance(strat, DSLStrategy) and strat.dsl.entry.random is None
-    dsl_only = isinstance(strat, DSLStrategy)
     near_miss_separation = max(strat.lookback_bars, 60 // step_min, 1)
     funnel: Counter[str] = Counter()
     ev_k_parts: list[np.ndarray] = []
@@ -319,7 +380,7 @@ def run(
                     near.append((NM.BLOCKED_BY_UNIVERSE, i, None))
         else:
             candidates = np.flatnonzero(gate)
-        prepared[tok] = _Prepared(frame, feats, draws, block_local, candidates, near)
+        prepared[tok] = _Prepared(frame, feats, draws, block_local, candidates, near, gate)
         if candidates.size:
             ev_k_parts.append(frame.k0 + candidates)
             ev_tok_parts.append(np.full(candidates.size, len(token_names), dtype=np.int32))
@@ -330,13 +391,66 @@ def run(
     ev_tok = np.concatenate(ev_tok_parts) if ev_tok_parts else np.empty(0, np.int32)
     order = np.argsort(ev_k, kind="stable")
     ev_k, ev_tok = ev_k[order], ev_tok[order]
+    return Preparation(
+        request=request,
+        dataset=dataset,
+        settlement=settlement,
+        strat=strat,
+        grid=grid,
+        prepared=prepared,
+        token_names=token_names,
+        ev_k=ev_k,
+        ev_tok=ev_tok,
+        settle_at=settle_at,
+        funnel=funnel,
+        quality=q,
+        n_wanted=len(wanted),
+        near_misses_enabled=near_misses_enabled,
+        near_miss_separation=near_miss_separation,
+    )
+
+
+def simulate(
+    prep: Preparation,
+    *,
+    forced: ForcedSignals | None = None,
+    near_misses: bool = True,
+    progress: Callable[[str, float], None] | None = None,
+) -> BacktestResult | LeanOutcome:
+    """The event loop over a preparation. With `forced` entry candidates the run is lean: no
+    rule traces, trade rows or equity curve, only the outcome (PRD §15.3 null models)."""
+    report = progress or (lambda phase, fraction: None)
+    request, dataset, settlement, strat, grid = (
+        prep.request,
+        prep.dataset,
+        prep.settlement,
+        prep.strat,
+        prep.grid,
+    )
+    universe = request.strategy.universe
+    constraints = request.strategy.constraints
+    lag = request.decision_lag_bars
+    prepared, token_names, settle_at, funnel = (
+        prep.prepared,
+        prep.token_names,
+        prep.settle_at,
+        prep.funnel,
+    )
+    q = copy.deepcopy(prep.quality)
+    lean = forced is not None
+    ev_k, ev_tok = (forced.ev_k, forced.ev_tok) if forced is not None else (prep.ev_k, prep.ev_tok)
+    near_misses_enabled = prep.near_misses_enabled and near_misses and not lean
+    near_miss_separation = prep.near_miss_separation
+    dsl_only = isinstance(strat, DSLStrategy)
 
     def candidates_at(k: int) -> list[str]:
         lo, hi = np.searchsorted(ev_k, k, "left"), np.searchsorted(ev_k, k, "right")
         return [token_names[i] for i in ev_tok[lo:hi]]
 
     portfolio = Portfolio(
-        request.starting_capital, grid.start, check_invariants=request.check_invariants
+        request.starting_capital,
+        grid.start,
+        check_invariants=request.check_invariants and not lean,
     )
     pending: list[Signal] = []
     equity_rows: list[EquityRow] = []
@@ -403,6 +517,8 @@ def run(
         return k - p.frame.k0 >= p.block_local
 
     def snapshot(k: int, m: dict[str, Decimal]) -> None:
+        if lean:
+            return
         equity_rows.append(
             EquityRow(
                 grid.ts(k),
@@ -502,6 +618,10 @@ def run(
         signal bar. For DSL strategies this also re-checks the vectorized mask (fails the run on
         disagreement). It runs for every *recorded* attempt: fills and each episode's final
         refusal."""
+        if forced is not None:
+            # imposed entries: the strategy's rules did not choose this bar, so there is nothing
+            # to re-check and no trace is kept
+            return {"ts": _iso(grid.ts(sig.signal_k)), "decision": "ENTER", "forced": forced.label}
         if sig.trace is None:
             decision = strat.evaluate_entry(view_for(sig.token_id, sig.signal_k, None))
             if not decision.enter:
@@ -516,7 +636,10 @@ def run(
     def finish_episode(tok: str) -> None:
         """Record an episode that ended without a fill as one trade row."""
         ep = episodes.pop(tok, None)
-        if ep is None or ep.last_row is None:
+        if ep is None:
+            return
+        q.episodes.append((ep.start_k, ep.last_candidate_k, tok))
+        if ep.last_row is None:
             return
         row = ep.last_row
         row["entry_rule_trace"] = {**entry_trace(row.pop("_signal")), **row["entry_rule_trace"]}
@@ -542,10 +665,11 @@ def run(
         if not portfolio.open and not pending:
             j = int(np.searchsorted(ev_k, k, "left"))
             nxt = int(ev_k[j]) if j < ev_k.size else grid.n
-            for kk in range(k, nxt):
-                equity_rows.append(
-                    EquityRow(grid.ts(kk), portfolio.cash, ZERO, 0, portfolio.realized_pnl)
-                )
+            if not lean:
+                for kk in range(k, nxt):
+                    equity_rows.append(
+                        EquityRow(grid.ts(kk), portfolio.cash, ZERO, 0, portfolio.realized_pnl)
+                    )
             k = nxt
             if k >= grid.n:
                 break
@@ -700,7 +824,8 @@ def run(
                     strat.exit_plan if isinstance(strat, DSLStrategy) else None,
                 )
                 if failure is None:
-                    del episodes[sig.token_id]
+                    done = episodes.pop(sig.token_id)
+                    q.episodes.append((done.start_k, done.last_candidate_k, sig.token_id))
                 else:
                     q.attempts_failed[failure] += 1
                     if failure in PERMANENT_REFUSALS:
@@ -729,6 +854,18 @@ def run(
         portfolio.value_at_mark(pos, grid.ts(last_k), end_marks[pos.token_id], trace)
     if equity_rows:
         portfolio.assert_invariants({}, constraints.max_open_positions)
+
+    if lean:
+        report("simulate", 1.0)
+        ending = portfolio.cash
+        return LeanOutcome(
+            ending_equity=ending,
+            net_profit=ending - request.starting_capital,
+            roi=float((ending - request.starting_capital) / request.starting_capital),
+            n_trades=len(portfolio.all_positions),
+            signals_generated=q.counters["signals_generated"],
+            signals_filled=q.counters["signals_filled"],
+        )
 
     q.entry_funnel = funnel
 
@@ -800,9 +937,10 @@ def run(
     }
     report("simulate", 1.0)
     result = _build_result(
-        request, dataset, grid, portfolio, equity_rows, q, strat, len(wanted), len(prepared)
+        request, dataset, grid, portfolio, equity_rows, q, strat, prep.n_wanted, len(prepared)
     )
     result.near_misses = near_rows
+    result.episodes = sorted(q.episodes)
     return result
 
 

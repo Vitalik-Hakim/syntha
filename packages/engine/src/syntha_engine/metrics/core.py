@@ -2,7 +2,7 @@
 
 Ambiguity is how backtesting tools mislead, so every metric here is defined in `DEFINITIONS`
 (shown as tooltips later) and suppressed rather than faked when the data can't support it.
-Bootstrap confidence intervals and null-hypothesis comparisons are M5 (PRD §15).
+Bootstrap confidence intervals and null-hypothesis comparisons live in `syntha_engine.honesty`.
 """
 
 from __future__ import annotations
@@ -184,6 +184,10 @@ def compute_metrics(
         warnings.append("OPTIMISTIC — assumes fill at mid, unlimited size")
     if n_trades < LOW_SAMPLE_TRADES:
         warnings.append("Too few trades to distinguish this from luck.")
+    if n_trades and not losses:
+        warnings.append(
+            "No losing trades: the profit factor is infinite, which usually means too few trades."
+        )
     if cost_ratio is not None and cost_ratio > COST_RATIO_WARNING:
         warnings.append(
             "Costs consumed more than half the gross edge. This strategy is highly "
@@ -209,7 +213,6 @@ def compute_metrics(
         "win_rate": len(wins) / n_trades if n_trades else None,
         "profit_factor": _profit_factor(wins, losses),
         "expectancy": float(sum(nets, Decimal(0)) / n_trades) if n_trades else None,
-        "expectancy_ci": None,  # bootstrap CI arrives in M5 (PRD §15.2)
         "max_consecutive_losses": longest,
         "worst_trade": {"seq": worst["seq"], "net_pnl": float(Decimal(worst["net_pnl"]))}
         if worst

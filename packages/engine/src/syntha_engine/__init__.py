@@ -5,6 +5,6 @@ in-memory Dataset and returns a BacktestResult. tools/check_engine_io.py fails C
 network, database, filesystem or subprocess import in this tree.
 """
 
-ENGINE_VERSION = "0.0.0"
+ENGINE_VERSION = "0.5.0"  # M5: explanations (M4) and the honesty layer
 
 __all__ = ["ENGINE_VERSION"]

@@ -17,6 +17,7 @@ import {
 import { count, pct, usd } from "@/lib/format";
 
 type CreateResponse = { run_id: string; status: string };
+type CreateGroupResponse = { group_id: string; runs: { run_id: string; preset: string | null }[] };
 
 function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
   return (
@@ -93,7 +94,7 @@ export function SimulateWizard() {
     return `This collection was pre-filtered on final volume (≥ ${usd(sel.min_lifetime_volume, { digits: 0 })}). ${strategy.name} uses ${asof === null ? "no" : usd(asof, { digits: 0 })} as-of volume filter, below the ${usd(sel.survivorship_free_for_min_volume_asof_at_least, { digits: 0 })} needed to avoid survivorship bias. Results will carry a warning.`;
   }, [selectedCollection, strategy]);
 
-  async function submit() {
+  async function submit(allPresets: boolean) {
     if (!strategy || !selectedPreset || !collection) return;
     setSubmitting(true);
     setSubmitError(null);
@@ -108,6 +109,13 @@ export function SimulateWizard() {
       fees: selectedPreset.fees as BacktestRequest["fees"],
     };
     try {
+      if (allPresets) {
+        // PRD §11.6: the default view is Realistic, with the other two alongside
+        const group = await apiPost<CreateGroupResponse>("/backtests/presets", request);
+        const realistic = group.runs.find((r) => r.preset === "REALISTIC") ?? group.runs[0]!;
+        router.push(`/runs/${realistic.run_id}`);
+        return;
+      }
       const created = await apiPost<CreateResponse>("/backtests", request);
       router.push(`/runs/${created.run_id}`);
     } catch (e) {
@@ -176,7 +184,7 @@ export function SimulateWizard() {
                 </label>
               ))}
             </div>
-            {preset === "OPTIMISTIC" ? <div className="mt-3"><Warning>Optimistic results must never be read alone: fills at mid with unlimited size are an upper bound.</Warning></div> : null}
+            {preset === "OPTIMISTIC" ? <div className="mt-3"><Warning>Optimistic results must never be read alone: every signal fills at the sampled price with unlimited size, which flatters execution (and magnifies a losing rule).</Warning></div> : null}
             <p className="mt-2 text-[11px] text-ink-faint">Order-book execution is unavailable: it needs recorded L2 data, which only exists from when the recorder started.</p>
           </Step>
 
@@ -222,10 +230,21 @@ export function SimulateWizard() {
             <Review label="Bars / lag" value={`${barInterval}m / ${lag}`} />
           </dl>
           {submitError ? <div className="mt-3"><ErrorState title="The API refused this run" detail={submitError} /></div> : null}
-          <button type="button" disabled={submitting || !collection} onClick={() => void submit()}
+          <button type="button" disabled={submitting || !collection} onClick={() => void submit(true)}
                   className="mt-4 w-full border border-accent bg-accent/10 px-3 py-2 text-sm text-ink hover:bg-accent/20 disabled:opacity-50">
-            {submitting ? "Queuing…" : "Run backtest"}
+            {submitting ? "Queuing…" : "Run all three presets"}
           </button>
+          <p className="mt-1 text-[11px] leading-relaxed text-ink-faint">
+            Optimistic, Realistic and Conservative side by side, so no result is read under a single set of execution assumptions.
+          </p>
+          <button type="button" disabled={submitting || !collection || preset === "OPTIMISTIC"} onClick={() => void submit(false)}
+                  title={preset === "OPTIMISTIC" ? "Optimistic is never run alone (PRD §11.6)" : undefined}
+                  className="mt-3 w-full border border-line px-3 py-1.5 text-xs text-ink-muted hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-50">
+            {preset === "OPTIMISTIC" ? "Optimistic can only run with the other two" : `Run ${selectedPreset?.label ?? preset} only`}
+          </button>
+          <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
+            Every run also computes bootstrap confidence intervals, a 200-variant permutation test, random-entry baselines and buy-and-hold on the same markets.
+          </p>
           <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">Runs are immutable and reproducible: the full configuration, dataset version and seed are recorded.</p>
         </aside>
       </div>

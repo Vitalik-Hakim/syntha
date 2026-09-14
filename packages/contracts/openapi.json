@@ -35,6 +35,9 @@
           "fees": {
             "$ref": "#/components/schemas/FeeConfig-Input"
           },
+          "honesty": {
+            "$ref": "#/components/schemas/HonestyConfig"
+          },
           "max_stale_minutes": {
             "default": 60,
             "description": "Entries need a price observed within this many minutes.",
@@ -117,6 +120,9 @@
           },
           "fees": {
             "$ref": "#/components/schemas/FeeConfig-Output"
+          },
+          "honesty": {
+            "$ref": "#/components/schemas/HonestyConfig"
           },
           "max_stale_minutes": {
             "default": 60,
@@ -335,6 +341,17 @@
       },
       "CreateBacktestResponse": {
         "properties": {
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset"
+          },
           "run_id": {
             "title": "Run Id",
             "type": "string"
@@ -348,6 +365,28 @@
           "status"
         ],
         "title": "CreateBacktestResponse",
+        "type": "object"
+      },
+      "CreatePresetRunsResponse": {
+        "description": "PRD §11.6 \"Run all three\": one run per scenario preset, sharing a group.",
+        "properties": {
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/CreateBacktestResponse"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "group_id",
+          "runs"
+        ],
+        "title": "CreatePresetRunsResponse",
         "type": "object"
       },
       "DatasetSelection": {
@@ -877,6 +916,42 @@
           "engine_version"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "HonestyConfig": {
+        "additionalProperties": false,
+        "description": "The statistical honesty layer (PRD §15), run with every backtest. Iteration counts are part\nof the config hash: the tests are seeded from the request's seed, so they are reproducible.",
+        "properties": {
+          "bootstrap_iterations": {
+            "default": 10000,
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Bootstrap Iterations",
+            "type": "integer"
+          },
+          "buy_and_hold": {
+            "default": true,
+            "title": "Buy And Hold",
+            "type": "boolean"
+          },
+          "permutations": {
+            "default": 200,
+            "description": "Market-shuffle permutation test iterations",
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Permutations",
+            "type": "integer"
+          },
+          "random_baselines": {
+            "default": 50,
+            "description": "Random-entry baseline simulations",
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Random Baselines",
+            "type": "integer"
+          }
+        },
+        "title": "HonestyConfig",
         "type": "object"
       },
       "MaxHold": {
@@ -1709,6 +1784,17 @@
       },
       "RunDetail": {
         "properties": {
+          "buy_and_hold_roi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buy And Hold Roi"
+          },
           "collection": {
             "anyOf": [
               {
@@ -1786,6 +1872,38 @@
             ],
             "title": "Finished At"
           },
+          "group": {
+            "description": "The run's preset group, in REALISTIC, OPTIMISTIC, CONSERVATIVE order",
+            "items": {
+              "$ref": "#/components/schemas/RunSummary"
+            },
+            "title": "Group",
+            "type": "array"
+          },
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          },
+          "honesty": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bootstrap, permutation test, random baseline, buy-and-hold",
+            "title": "Honesty"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1836,6 +1954,30 @@
             ],
             "title": "Net Profit"
           },
+          "permutation_percentile": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Percent of permuted variants this run beat (PRD §15.3)",
+            "title": "Permutation Percentile"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "OPTIMISTIC | REALISTIC | CONSERVATIVE | CUSTOM",
+            "title": "Preset"
+          },
           "progress": {
             "anyOf": [
               {
@@ -1856,6 +1998,21 @@
               }
             ],
             "title": "Roi"
+          },
+          "roi_ci90": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bootstrap 90% CI of ROI",
+            "title": "Roi Ci90"
           },
           "seed": {
             "title": "Seed",
@@ -2004,6 +2161,17 @@
       },
       "RunSummary": {
         "properties": {
+          "buy_and_hold_roi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buy And Hold Roi"
+          },
           "collection": {
             "anyOf": [
               {
@@ -2043,6 +2211,17 @@
             ],
             "title": "Finished At"
           },
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -2069,6 +2248,30 @@
             ],
             "title": "Net Profit"
           },
+          "permutation_percentile": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Percent of permuted variants this run beat (PRD §15.3)",
+            "title": "Permutation Percentile"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "OPTIMISTIC | REALISTIC | CONSERVATIVE | CUSTOM",
+            "title": "Preset"
+          },
           "roi": {
             "anyOf": [
               {
@@ -2079,6 +2282,21 @@
               }
             ],
             "title": "Roi"
+          },
+          "roi_ci90": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bootstrap 90% CI of ROI",
+            "title": "Roi Ci90"
           },
           "signals_filled": {
             "anyOf": [
@@ -3090,6 +3308,48 @@
           }
         },
         "summary": "Create Backtest",
+        "tags": [
+          "backtests"
+        ]
+      }
+    },
+    "/api/backtests/presets": {
+      "post": {
+        "description": "PRD §11.6 \"Run all three\": the request under each scenario preset, as one group. The\nrequest's own execution and fee settings are replaced.",
+        "operationId": "create_preset_backtests_api_backtests_presets_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BacktestRequest-Input"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatePresetRunsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Preset Backtests",
         "tags": [
           "backtests"
         ]

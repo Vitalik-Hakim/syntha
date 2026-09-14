@@ -95,6 +95,20 @@ class FeeConfig(_Strict):
         return cls(mode=FeeMode.CURRENT if name == "CONSERVATIVE" else FeeMode.HISTORICAL)
 
 
+class HonestyConfig(_Strict):
+    """The statistical honesty layer (PRD §15), run with every backtest. Iteration counts are part
+    of the config hash: the tests are seeded from the request's seed, so they are reproducible."""
+
+    bootstrap_iterations: int = Field(default=10_000, ge=0, le=100_000)
+    permutations: int = Field(
+        default=200, ge=0, le=5_000, description="Market-shuffle permutation test iterations"
+    )
+    random_baselines: int = Field(
+        default=50, ge=0, le=5_000, description="Random-entry baseline simulations"
+    )
+    buy_and_hold: bool = True
+
+
 class DatasetSelection(_Strict):
     collection: str | None = Field(default=None, description="Collection name; None = all markets.")
     start: datetime | None = None
@@ -119,9 +133,28 @@ class BacktestRequest(_Strict):
         default=True, description="No fee on redemption (docs/DATA_NOTES.md assumptions)."
     )
     check_invariants: bool = True
+    honesty: HonestyConfig = Field(default_factory=HonestyConfig)
 
     def canonical_json(self) -> str:
         return json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
 
     def config_hash(self) -> str:
         return hashlib.sha256(self.canonical_json().encode()).hexdigest()
+
+    def with_preset(self, name: Preset) -> BacktestRequest:
+        """This request under a PRD §11.6 scenario preset (execution and fees replaced)."""
+        return self.model_copy(
+            update={"execution": ExecutionConfig.preset(name), "fees": FeeConfig.preset(name)}
+        )
+
+    def preset_name(self) -> str:
+        """The §11.6 preset whose execution and fee settings this request uses, else CUSTOM."""
+        for name in PRESETS:
+            if self.execution == ExecutionConfig.preset(name) and self.fees == FeeConfig.preset(
+                name
+            ):
+                return name
+        return "CUSTOM"
+
+
+PRESETS: tuple[Preset, ...] = ("REALISTIC", "OPTIMISTIC", "CONSERVATIVE")

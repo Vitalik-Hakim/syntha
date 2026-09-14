@@ -93,6 +93,12 @@ checklists of every filter and rule with the values the engine saw. **Near misse
 (`/runs/<id>/near-misses`) answer "why didn't it trade here?": the bars that came closest to
 firing, and the bars where a filter or a portfolio constraint blocked an entry.
 
+**Every result answers "is this better than chance?"** (PRD §15). It shows a bootstrap confidence
+interval on ROI and expectancy, a 200-variant permutation test ("your strategy beat N% of
+permuted variants"; under ~95% is not evidence of edge), random-entry baselines, and buy-and-hold
+on the same markets. "Run all three presets" runs Realistic, Optimistic and Conservative side by
+side. `strategy-lab run … --no-honesty` skips the tests for quick iterations.
+
 Two collections so far:
 
 | Collection | What it is | Use it for |

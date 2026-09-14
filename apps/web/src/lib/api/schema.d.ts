@@ -22,6 +22,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/backtests/presets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Preset Backtests
+         * @description PRD §11.6 "Run all three": the request under each scenario preset, as one group. The
+         *     request's own execution and fee settings are replaced.
+         */
+        post: operations["create_preset_backtests_api_backtests_presets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/backtests/{run_id}": {
         parameters: {
             query?: never;
@@ -363,6 +384,7 @@ export interface components {
             decision_lag_bars?: number;
             execution?: components["schemas"]["ExecutionConfig"];
             fees?: components["schemas"]["FeeConfig-Input"];
+            honesty?: components["schemas"]["HonestyConfig"];
             /**
              * Max Stale Minutes
              * @description Entries need a price observed within this many minutes.
@@ -413,6 +435,7 @@ export interface components {
             decision_lag_bars?: number;
             execution?: components["schemas"]["ExecutionConfig"];
             fees?: components["schemas"]["FeeConfig-Output"];
+            honesty?: components["schemas"]["HonestyConfig"];
             /**
              * Max Stale Minutes
              * @description Entries need a price observed within this many minutes.
@@ -523,9 +546,21 @@ export interface components {
         };
         /** CreateBacktestResponse */
         CreateBacktestResponse: {
+            /** Preset */
+            preset?: string | null;
             /** Run Id */
             run_id: string;
             status: components["schemas"]["RunStatus"];
+        };
+        /**
+         * CreatePresetRunsResponse
+         * @description PRD §11.6 "Run all three": one run per scenario preset, sharing a group.
+         */
+        CreatePresetRunsResponse: {
+            /** Group Id */
+            group_id: string;
+            /** Runs */
+            runs: components["schemas"]["CreateBacktestResponse"][];
         };
         /** DatasetSelection */
         DatasetSelection: {
@@ -712,6 +747,35 @@ export interface components {
             status?: "ok";
             /** Version */
             version: string;
+        };
+        /**
+         * HonestyConfig
+         * @description The statistical honesty layer (PRD §15), run with every backtest. Iteration counts are part
+         *     of the config hash: the tests are seeded from the request's seed, so they are reproducible.
+         */
+        HonestyConfig: {
+            /**
+             * Bootstrap Iterations
+             * @default 10000
+             */
+            bootstrap_iterations?: number;
+            /**
+             * Buy And Hold
+             * @default true
+             */
+            buy_and_hold?: boolean;
+            /**
+             * Permutations
+             * @description Market-shuffle permutation test iterations
+             * @default 200
+             */
+            permutations?: number;
+            /**
+             * Random Baselines
+             * @description Random-entry baseline simulations
+             * @default 50
+             */
+            random_baselines?: number;
         };
         /** MaxHold */
         MaxHold: {
@@ -1045,6 +1109,8 @@ export interface components {
         };
         /** RunDetail */
         RunDetail: {
+            /** Buy And Hold Roi */
+            buy_and_hold_roi?: number | null;
             /** Collection */
             collection: string | null;
             config: components["schemas"]["BacktestRequest-Output"];
@@ -1069,6 +1135,20 @@ export interface components {
             execution_model: string | null;
             /** Finished At */
             finished_at: string | null;
+            /**
+             * Group
+             * @description The run's preset group, in REALISTIC, OPTIMISTIC, CONSERVATIVE order
+             */
+            group?: components["schemas"]["RunSummary"][];
+            /** Group Id */
+            group_id?: string | null;
+            /**
+             * Honesty
+             * @description Bootstrap, permutation test, random baseline, buy-and-hold
+             */
+            honesty?: {
+                [key: string]: unknown;
+            } | null;
             /** Id */
             id: string;
             /** Manifest */
@@ -1083,9 +1163,24 @@ export interface components {
             n_trades: number | null;
             /** Net Profit */
             net_profit: number | null;
+            /**
+             * Permutation Percentile
+             * @description Percent of permuted variants this run beat (PRD §15.3)
+             */
+            permutation_percentile?: number | null;
+            /**
+             * Preset
+             * @description OPTIMISTIC | REALISTIC | CONSERVATIVE | CUSTOM
+             */
+            preset?: string | null;
             progress: components["schemas"]["RunProgress"] | null;
             /** Roi */
             roi: number | null;
+            /**
+             * Roi Ci90
+             * @description Bootstrap 90% CI of ROI
+             */
+            roi_ci90?: number[] | null;
             /** Seed */
             seed: number;
             /** Signals Filled */
@@ -1122,6 +1217,8 @@ export interface components {
         RunStatus: "QUEUED" | "RUNNING" | "DONE" | "FAILED";
         /** RunSummary */
         RunSummary: {
+            /** Buy And Hold Roi */
+            buy_and_hold_roi?: number | null;
             /** Collection */
             collection: string | null;
             /**
@@ -1133,14 +1230,31 @@ export interface components {
             execution_model: string | null;
             /** Finished At */
             finished_at: string | null;
+            /** Group Id */
+            group_id?: string | null;
             /** Id */
             id: string;
             /** N Trades */
             n_trades: number | null;
             /** Net Profit */
             net_profit: number | null;
+            /**
+             * Permutation Percentile
+             * @description Percent of permuted variants this run beat (PRD §15.3)
+             */
+            permutation_percentile?: number | null;
+            /**
+             * Preset
+             * @description OPTIMISTIC | REALISTIC | CONSERVATIVE | CUSTOM
+             */
+            preset?: string | null;
             /** Roi */
             roi: number | null;
+            /**
+             * Roi Ci90
+             * @description Bootstrap 90% CI of ROI
+             */
+            roi_ci90?: number[] | null;
             /** Signals Filled */
             signals_filled: number | null;
             /** Signals Generated */
@@ -1467,6 +1581,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CreateBacktestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_preset_backtests_api_backtests_presets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BacktestRequest-Input"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatePresetRunsResponse"];
                 };
             };
             /** @description Validation Error */

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
+import { ciText } from "@/components/honesty";
 import { Badge, EmptyState, ErrorState, Loading, Signed } from "@/components/ui";
 import { apiGet, type RunList } from "@/lib/api/client";
 import { count, pct, ts, usd } from "@/lib/format";
@@ -25,7 +26,7 @@ export function RunsTable({ limit = 50, compact = false }: { limit?: number; com
       <div className="overflow-x-auto border border-line">
         <table className="w-full text-left text-xs">
           <thead className="bg-surface text-ink-faint">
-            <tr>{["Run", "Status", "Strategy", "Collection", "Execution", "Signals → filled", "Trades", "Net P&L", "ROI", "Created"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-2 font-medium">{h}</th>)}</tr>
+            <tr>{["Run", "Status", "Strategy", "Collection", "Preset", "Signals → filled", "Trades", "Net P&L", "ROI", "ROI 90% CI", "Beat permuted", "Created"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-2 font-medium">{h}</th>)}</tr>
           </thead>
           <tbody>
             {data.runs.map((r) => (
@@ -34,11 +35,13 @@ export function RunsTable({ limit = 50, compact = false }: { limit?: number; com
                 <td className="px-2 py-1.5"><Badge kind={r.status}>{r.status}</Badge></td>
                 <td className="px-2 py-1.5 text-ink">{r.strategy_name}</td>
                 <td className="px-2 py-1.5 text-ink-muted">{r.collection ?? "all"}</td>
-                <td className="px-2 py-1.5 font-mono text-[11px] text-ink-muted">{r.execution_model}</td>
+                <td className="px-2 py-1.5 font-mono text-[11px] text-ink-muted" title={r.execution_model ?? undefined}>{r.preset ?? r.execution_model}{r.group_id ? <span className="ml-1 text-ink-faint" title="part of a three-preset group">⋯</span> : null}</td>
                 <td className="num px-2 py-1.5">{count(r.signals_generated)} → {count(r.signals_filled)}</td>
                 <td className="num px-2 py-1.5">{count(r.n_trades)}{r.n_trades !== null && r.n_trades < 30 ? <span className="ml-1 text-warn" title="Too few trades to distinguish from luck">*</span> : null}</td>
                 <td className="px-2 py-1.5"><Signed value={r.net_profit}>{usd(r.net_profit, { signed: true })}</Signed></td>
                 <td className="px-2 py-1.5"><Signed value={r.roi}>{pct(r.roi, { signed: true })}</Signed></td>
+                <td className="num whitespace-nowrap px-2 py-1.5 text-ink-muted">{ciText(r.roi_ci90)}</td>
+                <td className="num px-2 py-1.5 text-ink-muted" title="Percent of permuted variants this run beat. Under ~95% is not evidence of edge.">{r.permutation_percentile == null ? "—" : `${Math.round(r.permutation_percentile)}%`}</td>
                 <td className="num px-2 py-1.5 text-ink-muted">{ts(r.created_at)}</td>
               </tr>
             ))}

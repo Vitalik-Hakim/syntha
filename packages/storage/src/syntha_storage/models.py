@@ -269,7 +269,7 @@ class StrategyVersion(Base):
 
 class BacktestRun(Base):
     __tablename__ = "backtest_runs"
-    __table_args__ = (Index(None, "created_at"),)
+    __table_args__ = (Index(None, "created_at"), Index(None, "group_id"))
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)  # BT-YYYYMMDD-NNNNN
     strategy_version_id: Mapped[uuid.UUID] = mapped_column(
@@ -292,6 +292,9 @@ class BacktestRun(Base):
     strategy_name: Mapped[str | None] = mapped_column(Text)
     collection: Mapped[str | None] = mapped_column(Text)
     manifest: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    honesty: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # PRD §15
+    group_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))  # preset triple-run
+    preset: Mapped[str | None] = mapped_column(Text)
 
 
 class BtTrade(Base):
