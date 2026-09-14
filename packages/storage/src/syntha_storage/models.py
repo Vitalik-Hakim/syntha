@@ -76,7 +76,8 @@ class Market(Base):
     category: Mapped[str | None] = mapped_column(Text)
     neg_risk: Mapped[bool] = mapped_column(Boolean, server_default="false")
     tick_size: Mapped[Decimal] = mapped_column(PRICE)
-    min_order_size: Mapped[Decimal] = mapped_column(MONEY)
+    # NULL when Polymarket reports none; the engine must treat the market as unexecutable.
+    min_order_size: Mapped[Decimal | None] = mapped_column(MONEY)
     fees_enabled: Mapped[bool | None] = mapped_column(Boolean)
     # The market's current feeSchedule; when it took effect comes from fee_schedules.
     fee_type: Mapped[str | None] = mapped_column(Text)

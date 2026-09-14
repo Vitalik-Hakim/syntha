@@ -95,6 +95,37 @@ def _gamma_winner(outcome_prices: list[Any]) -> int | str | None:
     return None
 
 
+def _chain_winner(v2_row: dict[str, Any], n_outcomes: int) -> int | str | None:
+    payouts = v2_row.get("payouts")
+    if payouts is not None:
+        try:
+            values = [int(v) for v in payouts]
+        except (TypeError, ValueError):
+            return None
+        if len(values) != n_outcomes or sum(values) <= 0:
+            return None
+        if len(set(values)) == 1:
+            return "INVALID"
+        winners = [i for i, v in enumerate(values) if v == max(values)]
+        if len(winners) == 1 and all(v == 0 for i, v in enumerate(values) if i != winners[0]):
+            return winners[0]
+        return None
+    raw_price = v2_row.get("price")
+    if raw_price is None or n_outcomes != 2:
+        return None
+    try:
+        price = int(raw_price)
+    except ValueError:
+        return None
+    if price == ONE_E18:
+        return 0
+    if price == 0:
+        return 1
+    if price == HALF_E18:
+        return "INVALID"
+    return None
+
+
 def resolve_market(gamma: dict[str, Any], v2_row: dict[str, Any] | None) -> Resolution:
     """Combine Gamma's final outcome prices with the on-chain /v2/resolutions row.
 
@@ -108,36 +139,31 @@ def resolve_market(gamma: dict[str, Any], v2_row: dict[str, Any] | None) -> Reso
     if not v2_row or v2_row.get("status") != "resolved":
         return Resolution("UNRESOLVED", None)
 
-    resolved_at = parse_ts(v2_row.get("last_update_timestamp"))
-    raw_price = v2_row.get("price")
-    try:
-        price = int(raw_price) if raw_price is not None else None
-    except ValueError:
-        price = None
+    # Two row shapes (docs/DATA_NOTES.md): UMA rows carry `price` (1e18 fixed point, outcome 0);
+    # native V2 / CTF rows carry `payouts` (micro-USDC per outcome) and `resolved_at`.
+    resolved_at = parse_ts(v2_row.get("resolved_at")) or parse_ts(
+        v2_row.get("last_update_timestamp")
+    )
+    chain_winner = _chain_winner(v2_row, len(outcomes))
 
-    chain_winner: int | str | None
-    if price == ONE_E18:
-        chain_winner = 0
-    elif price == 0:
-        chain_winner = 1
-    elif price == HALF_E18:
-        chain_winner = "INVALID"
-    else:
-        chain_winner = None
-
-    if len(outcomes) != 2:
-        # /v2 price only describes a binary payout; rely on Gamma for anything else.
-        chain_winner = gamma_winner
-
-    if chain_winner is None and gamma_winner is None:
-        return Resolution("UNRESOLVED", None, f"unrecognised resolution price {raw_price!r}")
-    if chain_winner is not None and gamma_winner is not None and chain_winner != gamma_winner:
+    if chain_winner is None:
+        return Resolution(
+            "UNRESOLVED",
+            None,
+            f"unrecognised chain payout (price={v2_row.get('price')!r}, "
+            f"payouts={v2_row.get('payouts')!r})",
+        )
+    if gamma_winner is None:
+        return Resolution(
+            "UNRESOLVED", None, f"gamma outcomePrices {gamma.get('outcomePrices')!r} not final"
+        )
+    if chain_winner != gamma_winner:
         return Resolution(
             "UNRESOLVED",
             None,
             f"gamma outcome {gamma_winner!r} disagrees with chain outcome {chain_winner!r}",
         )
-    winner = chain_winner if chain_winner is not None else gamma_winner
+    winner = chain_winner
     if winner == "INVALID":
         return Resolution("INVALID", resolved_at)
     assert isinstance(winner, int)

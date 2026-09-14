@@ -104,3 +104,50 @@ def test_price_windows_cover_range_without_exceeding_clob_limit() -> None:
 def test_resolution_batches_respect_api_cap() -> None:
     batches = pm.resolution_batches([f"0x{i}" for i in range(45)] + ["0x1"])
     assert [len(b) for b in batches] == [20, 20, 5]
+
+
+def test_markets_by_id_sends_repeated_ids_and_limit(tmp_path: Path) -> None:
+    seen: list[dict[str, list[str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(parse_qs(urlparse(str(request.url)).query))
+        return httpx.Response(200, json=[{"id": "1", "events": [{"id": "9"}]}, {"id": "2"}])
+
+    async def run() -> list[dict[str, object]]:
+        async with _client(tmp_path, handler) as api:
+            return await pm.fetch_markets_by_id(api, ["1", "2"], closed=True)
+
+    assert len(asyncio.run(run())) == 2
+    assert seen[0]["id"] == ["1", "2"]
+    assert seen[0]["closed"] == ["true"]
+    assert seen[0]["limit"] == ["2"]
+    with pytest.raises(ValueError):
+        asyncio.run(pm.fetch_markets_by_id(None, [str(i) for i in range(51)], closed=True))  # type: ignore[arg-type]
+
+
+def test_latest_market_objects_carries_events_from_older_fetch(tmp_path: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    raw = RawStore(tmp_path / "raw")
+    t0 = datetime(2026, 9, 1, tzinfo=UTC)
+    raw.write(
+        endpoint=pm.GAMMA_MARKETS_BY_ID,
+        url="u",
+        params={},
+        unit={},
+        status=200,
+        body='[{"id": "1", "q": "old", "events": [{"id": "9"}]}]',
+        fetched_at=t0,
+    )
+    raw.write(
+        endpoint=pm.GAMMA_MARKET,
+        url="u",
+        params={},
+        unit={"id": "1"},
+        status=200,
+        body='{"id": "1", "q": "new"}',
+        fetched_at=t0 + timedelta(hours=1),
+    )
+    ((_, market),) = pm.latest_market_objects(raw).values()
+    assert market["q"] == "new"
+    assert market["events"] == [{"id": "9"}]

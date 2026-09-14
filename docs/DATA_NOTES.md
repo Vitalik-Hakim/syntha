@@ -36,6 +36,13 @@ Source: live probes of `GET /markets`, `GET /events/{id}`; Polymarket changelog
   history. The page size is capped at 100.
 - `GET /markets/keyset` (`after_cursor` / `next_cursor`, max limit 100) replaces offset paging.
   The offset endpoints are slated for deprecation.
+- **`GET /markets/{id}` omits `events`**; the listing endpoints include it. Full objects for known
+  ids come from `GET /markets?id=A&id=B…&closed=true|false&limit=N`, batches of 50. The
+  `closed` filter still applies, so each batch is requested for both states. Found when the
+  first real fetch listed zero events; normalization merges both response kinds, newest first.
+- A full month is large: 405,828 markets were scheduled to end in July 2026 (404,479 closed,
+  1,349 still open on 2026-09-14). Listing them took about 20 minutes of sequential keyset
+  pages. Of those, 254,390 were sports, 118,258 crypto and 19,602 weather.
 - Fields used by ingestion: `conditionId`, `questionID`, `slug`, `question`, `outcomes` and
   `clobTokenIds` (both **JSON-encoded strings**, not arrays), `orderMinSize`,
   `orderPriceMinTickSize`, `negRisk`, `feesEnabled`, `feeType`, `feeSchedule`, `startDate`,
@@ -124,6 +131,13 @@ Source: `docs.polymarket.com/concepts/resolution.md`; live probe of `/v2/resolut
 - **50/50 ("Unknown") resolutions exist and redeem at $0.50 per token**, per the resolution
   docs. That confirms the PRD's `INVALID → 0.50`. A live 50/50 example has not been probed
   yet; the ingester maps `price == 5e17` to `INVALID` and fails loudly on any other value.
+- **Two row shapes carry the outcome.** UMA lifecycle rows have `price`. Native V2 and
+  terminal CTF rows have **no `price`**, but carry `payouts` (micro-USDC per outcome, e.g.
+  `[0, 1000000]`, or `[500000, 500000]` for 50/50) and an explicit `resolved_at`. In the July
+  2026 sample, 81 of 600 markets (13.5%) used the `payouts` shape. The first normalizer read only
+  `price`, so those outcomes came from Gamma alone, with no chain cross-check; this was caught in
+  the data-quality review and fixed. Both shapes are now parsed, and a market is only settled
+  when Gamma and the chain agree.
 - Row shape varies: some condition lookups return the question-keyed shape
   (`last_update_timestamp` in epoch seconds) instead of RFC3339. Handle both.
 - Some rows carry sentinel values (e.g. `reproposed_price: "69"`). Only `status` and `price`
@@ -207,6 +221,26 @@ first), which is the reverse of PRD §7's storage convention, so the recorder re
 `tick_size_change`, `best_bid_ask`, `new_market`, `market_resolved`. Prices and sizes are
 decimal strings.
 
+## M1 dataset: `july-2026-stratified-600` — accepted 2026-09-14
+
+| | |
+| --- | --- |
+| Universe | 405,828 markets scheduled to end in July 2026 (404,479 closed, 1,349 open) |
+| Sample | 600 markets, seed 20260914, 11 `feeType` strata (57–59 each; "other" has only 17) |
+| Fetch | 4,402 + 530 requests, 0 retries, 0 failures; raw layer ≈ 170 MB compressed (excluding the 203 MB listing) |
+| Normalized | 600 markets, 1,200 tokens, 41,720,927 bars (2025-05-02 → 2026-09-14), 370,209 prints |
+| Rebuild | bit-identical, hash `80e1d97c…c324ee`, ≈ 9 min per rebuild |
+| Full 1-minute history | 563 / 600 markets (bars from within 60 min of open to within 60 min of close, no gap > 60 min); 66 tokens have a gap > 60 min, 4 start late, 4 end early |
+| Resolutions | 374 NO, 127 YES, 39 OUTCOME_0, 50 OUTCOME_1, 9 INVALID (50/50), 1 UNRESOLVED (still `posed`); 0 source disagreements |
+| Unknown min order size | 4 markets |
+| Liquidity reality | 99.46% of bars have no trade print in the minute; median staleness 834 min; 139 of 1,200 tokens never traded |
+| Bars vs prints | 64.8% of bars with prints are within 1 tick of the minute's print range; 8.7% inside it |
+| YES/NO on prints | median \|p_yes + p_no − 1\| = 0.01, p95 0.028 (bars: exactly 0 for 99%+) |
+
+The liquidity numbers are the most important input for M2: most of these markets are thin, so
+`TRADE_PRINT` execution will reject most signals as `UNEXECUTABLE`. That is the honest answer,
+not a defect.
+
 ---
 
 ## Schema
@@ -265,6 +299,15 @@ persisted.
 `clob_token_id` is a 77-digit decimal string repeated on every `price_bars` row, the dominant
 storage cost. Consider an integer surrogate key or Timescale compression on `price_bars`
 once the engine's read patterns are known.
+
+### Unknown minimum order size — resolved (M1, migration 0004)
+
+4 of the 600 sampled markets (small Trump-mentions politics markets) have `orderMinSize: null`
+in Gamma, and `/clob-markets/{condition}` has no `mos` field for them either. Dropping them
+would shrink the universe (PRD §5.1 rule 6), and assuming the common value of 5 would invent
+data. `markets.min_order_size` is nullable, the report counts such markets
+(`markets_without_min_order_size`), and **the engine must mark any order on them
+`UNEXECUTABLE`** (M2).
 
 ### Maker vs taker minimum order size — resolved (pre-M1)
 

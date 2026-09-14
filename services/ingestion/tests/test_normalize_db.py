@@ -59,7 +59,10 @@ def _raw_fixture(root: Path) -> RawStore:
             "definition": {"seed": 1},
             "strata": {},
             "listed": {},
-            "markets": [{"id": "42", "condition_id": COND, "stratum": "sports"}],
+            "markets": [
+                {"id": "42", "condition_id": COND, "stratum": "sports"},
+                {"id": "43", "condition_id": "0xn0min", "stratum": "sports"},
+            ],
         },
     )
     market = {
@@ -85,6 +88,10 @@ def _raw_fixture(root: Path) -> RawStore:
         "events": [{"id": "7", "slug": "e", "title": "Event"}],
     }
     _write(raw, pm.GAMMA_MARKET, {"kind": "market", "id": "42"}, market, FETCH_1)
+    # A market whose Gamma object has no orderMinSize key at all (seen live): kept, min size NULL.
+    no_min = {**market, "id": "43", "conditionId": "0xn0min", "clobTokenIds": '["333", "444"]'}
+    del no_min["orderMinSize"]
+    _write(raw, pm.GAMMA_MARKET, {"kind": "market", "id": "43"}, no_min, FETCH_1)
     _write(
         raw,
         pm.GAMMA_EVENT,
@@ -169,7 +176,8 @@ def test_rebuild_is_bit_identical_and_correct(tmp_path: Path, db_url: str) -> No
     with psycopg.connect(psycopg_url(db_url)) as conn:
         conn.execute("SET TIME ZONE 'UTC'")
         m = conn.execute("""SELECT resolution, resolved_at, category, fee_type, fee_rate, fee_exponent,
-                                   open_ts, tick_size, min_order_size, event_id FROM markets""").fetchall()
+                                   open_ts, tick_size, min_order_size, event_id FROM markets
+                               ORDER BY condition_id""").fetchall()
         assert m == [
             (
                 "YES",
@@ -182,7 +190,19 @@ def test_rebuild_is_bit_identical_and_correct(tmp_path: Path, db_url: str) -> No
                 Decimal("0.001000"),
                 Decimal("5.000000"),
                 "7",
-            )
+            ),
+            (
+                "UNRESOLVED",  # no /v2/resolutions row: never settled on Gamma alone
+                None,
+                "sports",
+                "sports_fees_v2",
+                Decimal("0.030000"),
+                1,
+                datetime(2026, 5, 31, 23, tzinfo=UTC),
+                Decimal("0.001000"),
+                None,  # orderMinSize absent upstream: kept, not dropped, not invented
+                "7",
+            ),
         ]
         assert conn.execute("SELECT tags FROM events").fetchone() == (["nba", "sports"],)
         assert conn.execute("SELECT count(*) FROM trade_prints").fetchone() == (
@@ -212,3 +232,5 @@ def test_rebuild_is_bit_identical_and_correct(tmp_path: Path, db_url: str) -> No
         assert quality["build"]["rows_rejected"]["trade_prints:duplicate"] == 2
         assert quality["totals"]["bars"] == 11
         assert quality["fees"]["fee_types_without_schedule"] == []
+        assert quality["markets_without_min_order_size"] == 1
+        assert quality["build"]["markets_dropped"] == []

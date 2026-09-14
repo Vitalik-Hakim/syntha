@@ -190,7 +190,7 @@ class MarketBuild:
 
 
 def market_rows(raw: RawStore, wanted: dict[str, str], build: BuildLog) -> MarketBuild:
-    market_recs = _latest(raw.records(pm.GAMMA_MARKET), "id")
+    market_objects = pm.latest_market_objects(raw)
     event_recs = _latest(raw.records(pm.GAMMA_EVENT), "id")
 
     v2_rows: dict[str, dict[str, Any]] = {}
@@ -220,11 +220,11 @@ def market_rows(raw: RawStore, wanted: dict[str, str], build: BuildLog) -> Marke
     markets, outcomes, tokens = [], [], {}
     for market_id, condition_id in sorted(wanted.items(), key=lambda kv: kv[1]):
         build.rows_in["markets"] += 1
-        mrec = market_recs.get(market_id)
-        if mrec is None:
+        found = market_objects.get(market_id)
+        if found is None:
             build.markets_dropped.append({"condition_id": condition_id, "reason": "NO_METADATA"})
             continue
-        g = mrec.json()
+        mrec, g = found
         if g.get("conditionId") != condition_id:
             build.markets_dropped.append(
                 {"condition_id": condition_id, "reason": "CONDITION_ID_MISMATCH"}
@@ -237,10 +237,8 @@ def market_rows(raw: RawStore, wanted: dict[str, str], build: BuildLog) -> Marke
                 {"condition_id": condition_id, "reason": "BAD_OUTCOME_TOKENS"}
             )
             continue
-        if g.get("orderPriceMinTickSize") is None or g.get("orderMinSize") is None:
-            build.markets_dropped.append(
-                {"condition_id": condition_id, "reason": "NO_ORDER_CONSTRAINTS"}
-            )
+        if g.get("orderPriceMinTickSize") is None:
+            build.markets_dropped.append({"condition_id": condition_id, "reason": "NO_TICK_SIZE"})
             continue
 
         ev_list = g.get("events") or []
@@ -274,7 +272,7 @@ def market_rows(raw: RawStore, wanted: dict[str, str], build: BuildLog) -> Marke
                 _category(g, event_tags.get(event_id or "", [])),
                 bool(g.get("negRisk")),
                 _dec(g["orderPriceMinTickSize"]),
-                _dec(g["orderMinSize"]),
+                _dec(g.get("orderMinSize")),
                 g.get("feesEnabled"),
                 g.get("feeType") if schedule else None,
                 _dec(schedule.get("rate")) if schedule else None,

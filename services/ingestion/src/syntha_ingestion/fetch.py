@@ -154,18 +154,20 @@ async def _run_units(
 ) -> None:
     sem = asyncio.Semaphore(concurrency)
     total = len(units)
-    done = 0
+    done = skipped = failed = 0
 
     async def run(key: str, job: Callable[[], Awaitable[dict[str, Any]]]) -> None:
-        nonlocal done
+        nonlocal done, skipped, failed
         if key in checkpoints.done:
             report.units_skipped += 1
+            skipped += 1
             return
         async with sem:
             try:
                 info = await job()
             except FetchError as exc:
                 report.units_failed += 1
+                failed += 1
                 checkpoints.fail(key, str(exc))
                 log.error("%s failed: %s", key, exc)
                 return
@@ -177,17 +179,17 @@ async def _run_units(
 
     await asyncio.gather(*(run(k, j) for k, j in units))
     log.info(
-        "%s: done (%d units, %d skipped as already fetched)", phase, total, report.units_skipped
+        "%s: done (%d units: %d fetched, %d already fetched, %d failed)",
+        phase,
+        total,
+        done,
+        skipped,
+        failed,
     )
 
 
 def latest_markets(raw: RawStore, market_ids: set[str]) -> dict[str, dict[str, Any]]:
-    out: dict[str, dict[str, Any]] = {}
-    for rec in raw.records(pm.GAMMA_MARKET):
-        mid = str(rec.unit.get("id"))
-        if rec.status == 200 and mid in market_ids:
-            out[mid] = rec.json()  # later fetches overwrite earlier ones
-    return out
+    return {mid: m for mid, (_, m) in pm.latest_market_objects(raw).items() if mid in market_ids}
 
 
 async def fetch_collection(
@@ -210,13 +212,22 @@ async def fetch_collection(
     own_client = client is None
     api = client or ApiClient(raw, requests_per_second=settings.requests_per_second)
     try:
-        # 1. market metadata
-        async def market_job(mid: str) -> dict[str, Any]:
-            await pm.fetch_market(api, mid)
-            return {}
+        # 1. market metadata, batched through the listing endpoint (the only market response
+        #    that includes `events`). Closed and open markets are separate calls.
+        async def markets_job(ids: list[str], closed: bool) -> dict[str, Any]:
+            rows = await pm.fetch_markets_by_id(api, ids, closed=closed)
+            return {"markets": len(rows)}
 
+        ordered = sorted(market_ids)
+        batches = [
+            ordered[i : i + pm.MARKET_ID_BATCH] for i in range(0, len(ordered), pm.MARKET_ID_BATCH)
+        ]
         await _run_units(
-            [(f"market:{m}", partial(market_job, m)) for m in market_ids],
+            [
+                (f"markets:{closed}:{b[0]}:{len(b)}", partial(markets_job, b, closed))
+                for b in batches
+                for closed in (True, False)
+            ],
             checkpoints,
             report,
             settings.concurrency,

@@ -59,10 +59,14 @@ row and noting the date.
 - **Staleness comes from trade prints**, because CLOB bars exist for every minute whether or not
   anything traded. `is_stale` = no print in the bar; `staleness_minutes` = minutes since the last
   print (null before the first). Thresholds belong to the backtest config, not the data.
-- **Resolution needs both sources to agree.** Gamma's final `outcomePrices` must match the
+- **Resolution needs both sources to agree, and the chain must confirm.** Gamma's final `outcomePrices` must match the
   on-chain `/v2/resolutions` payout. Otherwise the market is `UNRESOLVED` and the disagreement
-  is reported, because a wrong settlement is worse than a missing one. `resolved_at` comes only
+  is reported, because a wrong settlement is worse than a missing one. A resolved row whose payout
+  we can't parse is also `UNRESOLVED`, never settled on Gamma alone. `resolved_at` comes only
   from `/v2/resolutions`.
+- **Markets with missing metadata stay in the dataset** unless the metadata is structurally
+  required (tick size, outcome tokens). Unknown `min_order_size` is stored as NULL, and the
+  engine must treat such markets as unexecutable rather than dropping them from the universe.
 - **Fees are per market plus a dated `fee_type` table**, not the PRD's category table (see
   DATA_NOTES). Ambiguous start dates use the earliest documented date (conservative).
 - **Fetching is resumable, not transactional.** Units (a market, a trade walk, a price window)

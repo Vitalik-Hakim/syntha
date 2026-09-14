@@ -16,9 +16,12 @@ from syntha_ingestion.config import (
     RESOLUTION_BATCH,
 )
 from syntha_ingestion.http import ApiClient
+from syntha_ingestion.raw_store import RawRecord, RawStore
 
 GAMMA_MARKETS_KEYSET = "gamma_markets_keyset"
 GAMMA_MARKET = "gamma_market"
+GAMMA_MARKETS_BY_ID = "gamma_markets_by_id"
+MARKET_ID_BATCH = 50
 GAMMA_EVENT = "gamma_event"
 CLOB_PRICES_HISTORY = "clob_prices_history"
 DATA_V2_TRADES = "data_v2_trades"
@@ -58,11 +61,59 @@ async def list_markets(
 
 
 async def fetch_market(client: ApiClient, market_id: str) -> dict[str, Any]:
+    """Single market. NOTE: this response omits `events`; prefer `fetch_markets_by_id`."""
     _, body = await client.get(
         GAMMA_MARKET, f"{GAMMA_URL}/markets/{market_id}", {}, {"kind": "market", "id": market_id}
     )
     result: dict[str, Any] = body
     return result
+
+
+async def fetch_markets_by_id(
+    client: ApiClient, market_ids: Sequence[str], *, closed: bool
+) -> list[dict[str, Any]]:
+    """Full market objects, including `events`, via the listing endpoint's repeated `id` filter.
+
+    The listing applies its `closed` filter on top of `id`, so closed and open markets need
+    separate calls.
+    """
+    if len(market_ids) > MARKET_ID_BATCH:
+        raise ValueError(f"at most {MARKET_ID_BATCH} market ids per call")
+    params = {
+        "id": list(market_ids),
+        "closed": "true" if closed else "false",
+        "limit": len(market_ids),
+    }
+    unit = {"kind": "markets_by_id", "ids": list(market_ids), "closed": closed}
+    _, body = await client.get(GAMMA_MARKETS_BY_ID, f"{GAMMA_URL}/markets", params, unit)
+    rows: list[dict[str, Any]] = body or []
+    return rows
+
+
+def latest_market_objects(raw: RawStore) -> dict[str, tuple[RawRecord, dict[str, Any]]]:
+    """Newest Gamma object per market id across both market endpoints.
+
+    If the newest object lacks `events` (a single-market response), `events` is carried over
+    from the newest object that has it.
+    """
+    records = sorted(
+        raw.records(GAMMA_MARKET) + raw.records(GAMMA_MARKETS_BY_ID), key=lambda r: r.sort_key
+    )
+    out: dict[str, tuple[RawRecord, dict[str, Any]]] = {}
+    events: dict[str, Any] = {}
+    for rec in records:
+        if rec.status != 200:
+            continue
+        body = rec.json()
+        for market in body if isinstance(body, list) else [body]:
+            mid = str(market["id"])
+            if market.get("events"):
+                events[mid] = market["events"]
+            out[mid] = (rec, market)
+    for mid, (rec, market) in out.items():
+        if not market.get("events") and mid in events:
+            out[mid] = (rec, {**market, "events": events[mid]})
+    return out
 
 
 async def fetch_event(client: ApiClient, event_id: str) -> dict[str, Any]:

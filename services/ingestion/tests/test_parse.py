@@ -91,3 +91,30 @@ def test_print_key_is_stable_and_discriminating() -> None:
     assert print_key(t) == print_key(dict(t))
     assert print_key(t) != print_key({**t, "size": 10.5})
     assert print_key(t) != print_key({**t, "side": "SELL"})
+
+
+def _payouts(payouts: list[int]) -> dict[str, object]:
+    return {
+        "status": "resolved",
+        "payouts": payouts,
+        "resolved_at": "2026-07-08T11:15:35Z",
+        "last_update_timestamp": "2026-07-08T11:15:35Z",
+    }
+
+
+def test_payouts_shaped_rows_are_cross_checked() -> None:
+    r = resolve_market(_gamma('["0", "1"]'), _payouts([0, 1_000_000]))
+    assert r.resolution == "NO"
+    assert r.resolved_at == datetime(2026, 7, 8, 11, 15, 35, tzinfo=UTC)
+    assert (
+        resolve_market(_gamma('["0.5", "0.5"]'), _payouts([500_000, 500_000])).resolution
+        == "INVALID"
+    )
+    mismatch = resolve_market(_gamma('["1", "0"]'), _payouts([0, 1_000_000]))
+    assert mismatch.resolution == "UNRESOLVED" and mismatch.anomaly
+
+
+def test_unconfirmed_by_chain_is_unresolved() -> None:
+    r = resolve_market(_gamma('["1", "0"]'), {"status": "resolved", "price": None})
+    assert r.resolution == "UNRESOLVED"
+    assert r.anomaly and "unrecognised chain payout" in r.anomaly

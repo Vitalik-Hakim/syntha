@@ -63,6 +63,11 @@ def build_quality(conn: psycopg.Connection[Any], build_log: dict[str, Any]) -> d
     """,
     )
 
+    q["markets_without_min_order_size"] = _one(
+        conn,
+        "SELECT count(*) AS markets FROM markets WHERE min_order_size IS NULL",
+    )["markets"]
+
     q["coverage_gaps"] = _one(
         conn,
         """
