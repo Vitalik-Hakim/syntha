@@ -1,0 +1,19 @@
+[project]
+name = "syntha-worker"
+version = "0.0.0"
+description = "Syntha RQ workers that execute backtests"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "redis>=5.0",
+  "rq>=1.16",
+  "syntha-engine",
+  "syntha-storage",
+]
+
+[tool.uv.sources]
+syntha-engine = { workspace = true }
+syntha-storage = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

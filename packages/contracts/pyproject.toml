@@ -1,0 +1,10 @@
+[project]
+name = "syntha-contracts"
+version = "0.0.0"
+description = "Pydantic models shared by the Syntha API and engine"
+requires-python = ">=3.12,<3.13"
+dependencies = ["pydantic>=2.8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

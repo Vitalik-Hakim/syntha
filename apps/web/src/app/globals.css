@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+/*
+ * Research-terminal palette (PRD §19): near-neutral dark ground, one restrained accent,
+ * no gradients or shadows on data surfaces. Gains/losses are never distinguished by hue
+ * alone — pair these colours with sign and weight.
+ */
+@theme {
+  --color-ground: #111214;
+  --color-surface: #17191c;
+  --color-raised: #1e2024;
+  --color-line: #2a2d32;
+  --color-ink: #e6e7e9;
+  --color-ink-muted: #9a9ea6;
+  --color-ink-faint: #6b6f77;
+  --color-accent: #d9a54a;
+  --color-gain: #5fb88a;
+  --color-loss: #e07a6b;
+  --color-warn: #d9a54a;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    background: var(--color-ground);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Every figure in the product renders with this. */
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}

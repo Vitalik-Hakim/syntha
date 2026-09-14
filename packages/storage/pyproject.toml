@@ -1,0 +1,18 @@
+[project]
+name = "syntha-storage"
+version = "0.0.0"
+description = "Syntha SQLAlchemy models, repositories and migrations"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "alembic>=1.13",
+  "psycopg[binary]>=3.2",
+  "sqlalchemy>=2.0.30",
+  "syntha-contracts",
+]
+
+[tool.uv.sources]
+syntha-contracts = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

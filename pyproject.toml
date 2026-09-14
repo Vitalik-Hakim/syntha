@@ -1,0 +1,69 @@
+[project]
+name = "syntha"
+version = "0.0.0"
+description = "Syntha — honest backtesting for Polymarket strategies (workspace root)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "syntha-api",
+  "syntha-contracts",
+  "syntha-engine",
+  "syntha-ingestion",
+  "syntha-recorder",
+  "syntha-storage",
+  "syntha-worker",
+]
+
+[dependency-groups]
+dev = [
+  "httpx>=0.27",
+  "mypy>=1.11",
+  "pytest>=8.3",
+  "ruff>=0.6",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["apps/api", "packages/*", "services/*"]
+
+[tool.uv.sources]
+syntha-api = { workspace = true }
+syntha-contracts = { workspace = true }
+syntha-engine = { workspace = true }
+syntha-ingestion = { workspace = true }
+syntha-recorder = { workspace = true }
+syntha-storage = { workspace = true }
+syntha-worker = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["apps/web", "docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["syntha_*", "check_engine_io"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+exclude = ["migrations/"]
+
+[[tool.mypy.overrides]]
+module = ["rq.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib -ra"
+pythonpath = ["tools"]
+testpaths = [
+  "apps/api/tests",
+  "packages/contracts/tests",
+  "packages/engine/tests",
+  "packages/storage/tests",
+  "tools/tests",
+]

@@ -1,0 +1,23 @@
+[project]
+name = "syntha-api"
+version = "0.0.0"
+description = "Syntha HTTP API"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi>=0.115",
+  "pydantic-settings>=2.4",
+  "redis>=5.0",
+  "syntha-contracts",
+  "syntha-engine",
+  "syntha-storage",
+  "uvicorn[standard]>=0.30",
+]
+
+[tool.uv.sources]
+syntha-contracts = { workspace = true }
+syntha-engine = { workspace = true }
+syntha-storage = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

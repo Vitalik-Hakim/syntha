@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: syntha
+          POSTGRES_PASSWORD: syntha
+          POSTGRES_DB: syntha_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U syntha -d syntha_test"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      SYNTHA_TEST_DATABASE_URL: postgresql+psycopg://syntha:syntha@localhost:5432/syntha_test
+      SYNTHA_TEST_REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-packages --locked
+      - name: No I/O in engine (PRD §6)
+        run: uv run python tools/check_engine_io.py packages/engine/src
+      - name: Ruff
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Mypy
+        run: >-
+          uv run mypy -p syntha_contracts -p syntha_engine -p syntha_storage -p syntha_api
+          -p syntha_worker -p syntha_ingestion -p syntha_recorder
+      - name: Tests (incl. migrations against Timescale)
+        run: uv run pytest
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: apps/web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm build

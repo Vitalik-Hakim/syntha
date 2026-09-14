@@ -1,0 +1,16 @@
+[project]
+name = "syntha-recorder"
+version = "0.0.0"
+description = "Syntha live CLOB websocket L2 recorder"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "syntha-storage",
+  "websockets>=13",
+]
+
+[tool.uv.sources]
+syntha-storage = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

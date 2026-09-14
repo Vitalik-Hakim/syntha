@@ -1,0 +1,29 @@
+{
+  "name": "@syntha/web",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@12.4.1",
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "15.5.25",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.5.25",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9"
+  }
+}

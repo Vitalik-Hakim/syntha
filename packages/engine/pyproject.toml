@@ -1,0 +1,20 @@
+[project]
+name = "syntha-engine"
+version = "0.0.0"
+description = "Syntha backtest engine. Pure computation: no network, no database, no filesystem."
+requires-python = ">=3.12,<3.13"
+# Adding a dependency here? It must not perform I/O on the engine's behalf.
+# tools/check_engine_io.py enforces the import boundary in CI.
+dependencies = [
+  "numpy>=2.0",
+  "polars>=1.5",
+  "pydantic>=2.8",
+  "syntha-contracts",
+]
+
+[tool.uv.sources]
+syntha-contracts = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
