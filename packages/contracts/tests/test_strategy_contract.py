@@ -24,6 +24,9 @@ def test_builtin_strategies_are_valid_and_labelled() -> None:
         "favourite_drift",
         "buy_and_hold_to_resolution",
         "random_entry",
+        "overreaction_fade",
+        "favourite_to_resolution_yes",
+        "late_longshot_to_resolution",
     }
     for s in strategies.values():
         assert s.description and "not a trading recommendation" in s.description

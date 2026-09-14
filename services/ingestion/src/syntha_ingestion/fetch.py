@@ -58,6 +58,41 @@ def _now_iso() -> str:
 # ------------------------------------------------------------------ sample
 
 
+def saved_listing(
+    raw: RawStore, end_date_min: str, end_date_max: str, closed: bool
+) -> tuple[list[dict[str, Any]], str | None, int, bool, str | None]:
+    """Pages of this listing already in the raw store, newest record per page number, taken as
+    a contiguous run from page 0. Returns (their markets, the cursor to continue from, the next
+    page number, whether the listing was already complete, the cursor that fetched the last
+    saved page). A long listing (August 2026 had
+    4,600 pages) can be cut off by a Cloudflare block; this lets the next attempt continue rather
+    than start over."""
+    by_page: dict[int, Any] = {}
+    for rec in raw.records(pm.GAMMA_MARKETS_KEYSET):  # oldest first, so the newest wins
+        u = rec.unit
+        if (
+            rec.status == 200
+            and u.get("end_date_min") == end_date_min
+            and u.get("end_date_max") == end_date_max
+            and u.get("closed") == closed
+        ):
+            by_page[int(u["page"])] = rec
+    markets: list[dict[str, Any]] = []
+    page = 0
+    while page in by_page:
+        rec = by_page[page]
+        body = rec.json()
+        found = body.get("markets") or []
+        markets.extend(found)
+        cursor = body.get("next_cursor")
+        page += 1
+        if not cursor or not found:
+            return markets, None, page, True, None
+        if page not in by_page:
+            return markets, cursor, page, False, rec.params.get("after_cursor")
+    return markets, None, 0, False, None
+
+
 async def sample_collection(
     settings: IngestSettings,
     *,
@@ -112,15 +147,47 @@ async def sample_collection(
         own_client = client is None
         api = client or ApiClient(raw, requests_per_second=settings.requests_per_second)
         try:
+            seen_ids: set[str] = set()
             for closed in (
                 True,
                 False,
             ):  # unresolved markets stay in the universe (PRD §5.1 rule 6)
-                async for market in pm.list_markets(
-                    api, end_date_min=end_date_min, end_date_max=end_date_max, closed=closed
-                ):
-                    listed["closed" if closed else "open"] += 1
-                    markets.append(market)
+                saved, cursor, page, complete, prev = saved_listing(
+                    raw, end_date_min, end_date_max, closed
+                )
+                if saved:
+                    log.info(
+                        "resuming %s listing from %d saved pages (%d markets)%s",
+                        "closed" if closed else "open",
+                        page,
+                        len(saved),
+                        ", already complete" if complete else "",
+                    )
+                live = (
+                    pm.list_markets(
+                        api,
+                        end_date_min=end_date_min,
+                        end_date_max=end_date_max,
+                        closed=closed,
+                        start_cursor=cursor,
+                        start_page=page,
+                        previous_cursor=prev,
+                    )
+                    if not complete
+                    else None
+                )
+                for market in saved:
+                    if market["conditionId"] not in seen_ids:
+                        seen_ids.add(market["conditionId"])
+                        listed["closed" if closed else "open"] += 1
+                        markets.append(market)
+                if live is not None:
+                    async for market in live:
+                        if market["conditionId"] in seen_ids:
+                            continue
+                        seen_ids.add(market["conditionId"])
+                        listed["closed" if closed else "open"] += 1
+                        markets.append(market)
                 log.info(
                     "listed %d %s markets",
                     listed["closed" if closed else "open"],

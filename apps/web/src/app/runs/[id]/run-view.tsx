@@ -108,6 +108,8 @@ function RunHeader({ run }: { run: RunDetail }) {
             <>
               <Link className="text-accent hover:underline" href={`/runs/${run.id}/trades`}>Trade blotter →</Link>
               <Link className="text-ink-muted hover:text-ink" href={`/runs/${run.id}/near-misses`}>Near misses</Link>
+              <Link className="text-ink-muted hover:text-ink" href={`/simulate?fork=${run.id}`} title="Start a new run from this configuration">Fork</Link>
+              <a className="text-ink-muted hover:text-ink" href={`/api/backtests/${run.id}/report.md`}>Report</a>
               <a className="text-ink-muted hover:text-ink" href={`/api/backtests/${run.id}/export.csv`}>CSV</a>
               <a className="text-ink-muted hover:text-ink" href={`/api/backtests/${run.id}/export.json`}>JSON</a>
             </>
@@ -123,6 +125,13 @@ function RunHeader({ run }: { run: RunDetail }) {
         <Meta label="capital" value={usd(cfg.starting_capital as string)} />
         <Meta label="created" value={ts(run.created_at)} />
       </dl>
+      {run.parent_run_id ? (
+        <p className="mt-2 text-xs text-ink-muted">
+          Forked from <Link href={`/runs/${run.parent_run_id}`} className="num text-accent hover:underline">{run.parent_run_id}</Link>
+          {" · "}
+          <Link href={`/compare?run_ids=${run.parent_run_id}&run_ids=${run.id}`} className="text-accent hover:underline">compare with parent →</Link>
+        </p>
+      ) : null}
     </header>
   );
 }
@@ -238,11 +247,7 @@ function Results({ run, metrics: m, dq, equity }: { run: RunDetail; metrics: Met
         </Section>
         <Section title="Why signals didn't fill">
           <Bars data={dq.signals_unexecutable_reasons ?? {}} empty="Every signal filled." />
-          {dq.signals_rejected_min_size ? (
-            <p className="mt-2 text-xs text-ink-muted">
-              Rejected for minimum order size: <span className="num text-ink">{count(dq.signals_rejected_min_size)}</span>
-            </p>
-          ) : null}
+          {dq.signals_rejected_min_size ? <MinSizeCauses dq={dq} /> : null}
         </Section>
       </div>
 
@@ -278,6 +283,39 @@ function OptimisticAlone({ run }: { run: RunDetail }) {
         {busy ? "Queuing…" : "Run all three presets"}
       </button>
       {error ? <p className="mt-2 text-xs text-loss">{error}</p> : null}
+    </div>
+  );
+}
+
+const MIN_SIZE_HINTS: Record<string, [string, string]> = {
+  sizing: ["the sizing rule asked for less than the market minimum", "set “Below the market minimum” to Round up, or size larger"],
+  max_total_exposure_pct: ["the exposure cap left too little room", "raise max total exposure or size smaller"],
+  cash: ["cash ran out", "more starting capital, or fewer simultaneous positions"],
+  max_notional_per_trade: ["max notional per trade is below the minimum order", "raise max notional per trade"],
+  liquidity: ["the bar's printed volume capped the order below the minimum", "a real constraint: thin markets cannot take the order"],
+};
+
+/** Why orders fell below the market's minimum size, with the lever for each cause. */
+function MinSizeCauses({ dq }: { dq: DQ }) {
+  const causes: Record<string, number> = dq.signals_rejected_min_size_by_cause ?? {};
+  const wouldFill: number = dq.min_size_rejections_round_up_would_fill ?? 0;
+  return (
+    <div className="mt-3 border-t border-line pt-2 text-xs">
+      <p className="text-ink-muted">
+        Rejected for minimum order size: <span className="num text-ink">{count(dq.signals_rejected_min_size)}</span>
+        {dq.entries_rounded_up_to_min_size ? <> · rounded up and filled: <span className="num text-ink">{count(dq.entries_rounded_up_to_min_size)}</span></> : null}
+      </p>
+      {Object.keys(causes).length ? (
+        <ul className="mt-1 space-y-1">
+          {Object.entries(causes).sort((a, b) => b[1] - a[1]).map(([cause, n]) => (
+            <li key={cause} className="grid grid-cols-[3rem_minmax(0,1fr)] gap-2">
+              <span className="num text-right text-ink">{count(n)}</span>
+              <span className="text-ink-muted">{MIN_SIZE_HINTS[cause]?.[0] ?? cause}<span className="block text-[11px] text-ink-faint">{MIN_SIZE_HINTS[cause]?.[1]}</span></span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {wouldFill ? <p className="mt-1 text-[11px] text-ink-faint">{count(wouldFill)} of these would have filled with “Round up to minimum”.</p> : null}
     </div>
   );
 }

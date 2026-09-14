@@ -11,7 +11,7 @@ where entry_cost = shares × entry_price + entry_fee and exit_net = exit proceed
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from typing import Any
 
 from syntha_contracts.enums import ExitReason, FillStatus, SizingMode
@@ -81,6 +81,12 @@ class SizingResult:
     final_notional: Decimal
     binding: str | None
     liquidity_limited: bool
+    rounded_up_to_min: bool = False
+    # why the order is below the market minimum, when it is: sizing | cash |
+    # max_total_exposure_pct | max_notional_per_trade | liquidity
+    below_min_cause: str | None = None
+    # the limit that would stop placing the minimum instead (None: rounding up would have filled)
+    round_up_blocked_by: str | None = None
 
 
 def _floor(x: Decimal, quantum: Decimal) -> Decimal:
@@ -98,6 +104,7 @@ def size_entry(
     liquidity_cap: Decimal | None,
     fee: FeeTerms,
     share_precision: int,
+    min_order_size: Decimal | None = None,
 ) -> SizingResult:
     """Shares to buy after every clamp (PRD §10.3). `binding` names the constraint that set the
     final size, first in order on ties: max_notional_per_trade, cash, max_total_exposure_pct,
@@ -144,7 +151,35 @@ def size_entry(
     while shares > ZERO and shares * price + fee_amount(shares, price, fee) > cash:
         shares -= q  # fee rounding can exceed the analytic bound by a quantum
         binding = "cash"
-    return SizingResult(shares, requested, shares * price, binding, liquidity_limited)
+
+    if min_order_size is None or shares >= min_order_size:
+        return SizingResult(shares, requested, shares * price, binding, liquidity_limited)
+
+    # Below the market minimum. ROUND_UP places the minimum when every hard limit still allows
+    # it; otherwise (or with SKIP) the order is rejected and the cause is recorded.
+    target = min_order_size.quantize(q, rounding=ROUND_UP)
+    notional = target * price
+    checks = [
+        ("max_notional_per_trade", limits[0][1] is None or notional <= limits[0][1]),
+        ("cash", notional + fee_amount(target, price, fee) <= cash),
+        ("max_total_exposure_pct", notional <= exposure_headroom),
+        ("liquidity", liquidity_cap is None or target <= liquidity_cap),
+        ("sizing", notional <= requested * Decimal(str(sizing.round_up_max_multiple))),
+    ]
+    failed = next((name for name, ok in checks if not ok), None)
+    if sizing.min_order_policy == "ROUND_UP" and failed is None:
+        return SizingResult(
+            target, requested, notional, "min_order_size", False, rounded_up_to_min=True
+        )
+    return SizingResult(
+        shares,
+        requested,
+        shares * price,
+        binding,
+        liquidity_limited,
+        below_min_cause=binding if binding is not None else "sizing",
+        round_up_blocked_by=failed,
+    )
 
 
 class Portfolio:

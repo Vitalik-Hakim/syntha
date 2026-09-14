@@ -25,8 +25,8 @@ router = APIRouter(tags=["catalog"])
 PRESET_TEXT = {
     "OPTIMISTIC": (
         "Optimistic",
-        "Fills at the sampled mid price with unlimited size and no slippage. "
-        "An upper bound, never a forecast.",
+        "Every signal fills at the sampled price with unlimited size and no slippage. "
+        "Optimistic about execution, not a forecast of P&L; never read alone.",
     ),
     "REALISTIC": (
         "Realistic",

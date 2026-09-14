@@ -265,6 +265,7 @@ class StrategyVersion(Base):
     dsl: Mapped[dict[str, Any]] = mapped_column(JSONB)
     dsl_hash: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(TSTZ)
+    note: Mapped[str | None] = mapped_column(Text)  # what changed in this version
 
 
 class BacktestRun(Base):
@@ -295,6 +296,10 @@ class BacktestRun(Base):
     honesty: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # PRD §15
     group_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))  # preset triple-run
     preset: Mapped[str | None] = mapped_column(Text)
+    # the run this one was forked or rerun from
+    parent_run_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("backtest_runs.id", ondelete="SET NULL")
+    )
 
 
 class BtTrade(Base):

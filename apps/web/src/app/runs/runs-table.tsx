@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
@@ -9,7 +10,13 @@ import { Badge, EmptyState, ErrorState, Loading, Signed } from "@/components/ui"
 import { apiGet, type RunList } from "@/lib/api/client";
 import { count, pct, ts, usd } from "@/lib/format";
 
-export function RunsTable({ limit = 50, compact = false }: { limit?: number; compact?: boolean }) {
+export function RunsTable({ limit = 50, compact = false, selectable = false, onCompare }: {
+  limit?: number; compact?: boolean; selectable?: boolean; onCompare?: (ids: string[]) => void;
+}) {
+  const router = useRouter();
+  const [picked, setPicked] = useState<string[]>([]);
+  const canSelect = selectable || !compact;
+  const compare = onCompare ?? ((ids: string[]) => router.push(`/compare?${ids.map((i) => `run_ids=${encodeURIComponent(i)}`).join("&")}`));
   const [data, setData] = useState<RunList | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -26,11 +33,17 @@ export function RunsTable({ limit = 50, compact = false }: { limit?: number; com
       <div className="overflow-x-auto border border-line">
         <table className="w-full text-left text-xs">
           <thead className="bg-surface text-ink-faint">
-            <tr>{["Run", "Status", "Strategy", "Collection", "Preset", "Signals → filled", "Trades", "Net P&L", "ROI", "ROI 90% CI", "Beat permuted", "Created"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-2 font-medium">{h}</th>)}</tr>
+            <tr>{canSelect ? <th className="px-2 py-2" /> : null}{["Run", "Status", "Strategy", "Collection", "Preset", "Signals → filled", "Trades", "Net P&L", "ROI", "ROI 90% CI", "Beat permuted", "Created"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-2 font-medium">{h}</th>)}</tr>
           </thead>
           <tbody>
             {data.runs.map((r) => (
-              <tr key={r.id} className="border-t border-line hover:bg-raised">
+              <tr key={r.id} className={`border-t border-line hover:bg-raised ${picked.includes(r.id) ? "bg-raised" : ""}`}>
+                {canSelect ? (
+                  <td className="px-2 py-1.5">
+                    <input type="checkbox" aria-label={`select ${r.id} to compare`} checked={picked.includes(r.id)}
+                           onChange={(e) => setPicked((p) => (e.target.checked ? [...p, r.id].slice(-6) : p.filter((x) => x !== r.id)))} />
+                  </td>
+                ) : null}
                 <td className="px-2 py-1.5"><Link href={`/runs/${r.id}`} className="num text-accent hover:underline">{r.id}</Link></td>
                 <td className="px-2 py-1.5"><Badge kind={r.status}>{r.status}</Badge></td>
                 <td className="px-2 py-1.5 text-ink">{r.strategy_name}</td>
@@ -50,11 +63,22 @@ export function RunsTable({ limit = 50, compact = false }: { limit?: number; com
       </div>
     );
 
-  if (compact) return body;
+  const bar = canSelect ? (
+    <div className="mb-2 flex items-center gap-3 text-xs text-ink-muted">
+      <button type="button" disabled={picked.length < 2} onClick={() => compare(picked)}
+              className="border border-accent bg-accent/10 px-3 py-1 text-ink hover:bg-accent/20 disabled:cursor-not-allowed disabled:border-line disabled:bg-transparent disabled:text-ink-faint">
+        Compare {picked.length >= 2 ? picked.length : ""} selected
+      </button>
+      <span>{picked.length < 2 ? "Tick two to six runs." : picked.join(" · ")}</span>
+    </div>
+  ) : null;
+
+  if (compact) return <>{bar}{body}</>;
   return (
     <div className="max-w-7xl">
       <PageHeader title="Runs"><Link href="/simulate" className="text-sm text-accent hover:underline">New backtest →</Link></PageHeader>
       <p className="mb-3 text-xs text-ink-faint">Every run is immutable. * marks runs with fewer than 30 trades.</p>
+      {bar}
       {body}
     </div>
   );

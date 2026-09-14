@@ -151,3 +151,45 @@ def test_latest_market_objects_carries_events_from_older_fetch(tmp_path: Path) -
     ((_, market),) = pm.latest_market_objects(raw).values()
     assert market["q"] == "new"
     assert market["events"] == [{"id": "9"}]
+
+
+def test_listing_routes_around_a_poisoned_cursor(tmp_path: Path) -> None:
+    """Cloudflare rejects one specific cursor value with a 403 every time. The listing then
+    re-fetches the previous page with a smaller page size, which changes the cursor."""
+    calls: list[tuple[str | None, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        q = parse_qs(urlparse(str(request.url)).query)
+        cursor, limit = q.get("after_cursor", [None])[0], q["limit"][0]
+        calls.append((cursor, limit))
+        if cursor is None:
+            return httpx.Response(
+                200,
+                json={
+                    "markets": [{"conditionId": "m1"}],
+                    "next_cursor": "POISON" if limit == "100" else "fine",
+                },
+            )
+        if cursor == "POISON":
+            return httpx.Response(403, text="<html>blocked</html>")
+        if cursor == "fine":
+            return httpx.Response(
+                200, json={"markets": [{"conditionId": "m2"}], "next_cursor": None}
+            )
+        raise AssertionError(cursor)
+
+    async def run() -> list[str]:
+        async with _client(tmp_path, handler) as api:
+            return [
+                m["conditionId"]
+                async for m in pm.list_markets(
+                    api,
+                    end_date_min="2026-08-01T00:00:00Z",
+                    end_date_max="2026-09-01T00:00:00Z",
+                    closed=True,
+                )
+            ]
+
+    ids = asyncio.run(run())
+    assert ids == ["m1", "m1", "m2"]  # page 0 re-yielded at limit 99; callers de-duplicate
+    assert calls == [(None, "100"), ("POISON", "100"), (None, "99"), ("fine", "99")]

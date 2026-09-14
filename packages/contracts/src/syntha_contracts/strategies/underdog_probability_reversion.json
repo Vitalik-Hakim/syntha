@@ -4,25 +4,70 @@
   "description": "Example strategy — not a trading recommendation. Buys cheap outcomes on a short-term upswing with some traded volume.",
   "universe": {
     "side": "BUY_YES",
-    "categories": ["sports"],
+    "categories": [
+      "sports"
+    ],
     "min_volume_asof": 10000,
     "min_time_to_resolution_minutes": 30
   },
   "entry": {
     "all": [
-      {"feature": "price", "op": "lte", "value": 0.20},
-      {"feature": "price_change_pct", "params": {"lookback_minutes": 10}, "op": "gte", "value": 0.03},
-      {"feature": "traded_volume", "params": {"lookback_minutes": 10}, "op": "gte", "value": 50}
+      {
+        "feature": "price",
+        "op": "lte",
+        "value": 0.2
+      },
+      {
+        "feature": "price_change_pct",
+        "params": {
+          "lookback_minutes": 10
+        },
+        "op": "gte",
+        "value": 0.03
+      },
+      {
+        "feature": "traded_volume",
+        "params": {
+          "lookback_minutes": 10
+        },
+        "op": "gte",
+        "value": 50
+      }
     ]
   },
-  "sizing": {"mode": "PCT_OF_EQUITY", "value": 0.05, "max_notional_per_trade": 25.0},
+  "sizing": {
+    "mode": "PCT_OF_EQUITY",
+    "value": 0.05,
+    "max_notional_per_trade": 25.0,
+    "min_order_policy": "ROUND_UP",
+    "round_up_max_multiple": 2.0
+  },
   "exit": {
     "any": [
-      {"type": "TAKE_PROFIT_PCT", "value": 0.30},
-      {"type": "STOP_LOSS_PCT", "value": 0.20},
-      {"type": "PRICE_ABOVE", "value": 0.30},
-      {"type": "MAX_HOLD_MINUTES", "value": 120},
-      {"type": "RULE", "condition": {"feature": "spread_proxy", "op": "gt", "value": 0.05}}
+      {
+        "type": "TAKE_PROFIT_PCT",
+        "value": 0.3
+      },
+      {
+        "type": "STOP_LOSS_PCT",
+        "value": 0.2
+      },
+      {
+        "type": "PRICE_ABOVE",
+        "value": 0.3
+      },
+      {
+        "type": "MAX_HOLD_MINUTES",
+        "value": 120
+      },
+      {
+        "type": "RULE",
+        "condition": {
+          "feature": "spread_proxy",
+          "op": "gt",
+          "value": 0.05
+        }
+      }
     ]
   },
   "constraints": {

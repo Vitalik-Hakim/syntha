@@ -60,6 +60,22 @@ def test_restricted_fields_only_in_settlement_and_only_traded_side_loaded(db: st
     assert loaded.content_hash == "hash-1"
 
 
+def test_either_side_loads_both_tokens(db: str) -> None:
+    request = _request()
+    request = request.model_copy(
+        update={
+            "strategy": request.strategy.model_copy(
+                update={"universe": request.strategy.universe.model_copy(update={"side": "EITHER"})}
+            )
+        }
+    )
+    loaded = load_dataset(db, request)
+    assert set(loaded.dataset.tokens) == {"Y1", "N1"}
+    result = run(request, loaded.dataset, loaded.settlement)
+    # price <= 0.5 holds for Y1 (0.40) only; the run buys YES, never both sides
+    assert [t["side"] for t in result.trades] == ["BUY_YES"]
+
+
 def test_loaded_dataset_runs_end_to_end(db: str) -> None:
     loaded = load_dataset(db, _request())
     result = run(_request(), loaded.dataset, loaded.settlement)

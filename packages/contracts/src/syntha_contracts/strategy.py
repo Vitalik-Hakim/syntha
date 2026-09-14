@@ -82,6 +82,14 @@ class Sizing(_Strict):
     mode: SizingMode
     value: float = Field(gt=0)
     max_notional_per_trade: float | None = Field(default=None, gt=0)
+    min_order_policy: Literal["SKIP", "ROUND_UP"] = Field(
+        default="SKIP",
+        description="When the sized order is below the market's minimum order size: SKIP rejects "
+        "it (REJECTED_MIN_SIZE); ROUND_UP places the minimum instead, if cash, exposure headroom, "
+        "max_notional_per_trade and the liquidity cap all still allow it and it is at most "
+        "round_up_max_multiple times the requested notional.",
+    )
+    round_up_max_multiple: float = Field(default=2.0, ge=1.0, le=20.0)
 
 
 class TakeProfit(_Strict):

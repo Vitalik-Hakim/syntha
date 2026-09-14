@@ -25,6 +25,7 @@ from typing import Any
 import numpy as np
 
 from syntha_contracts.backtest import BacktestRequest, HonestyConfig
+from syntha_contracts.enums import Side
 from syntha_contracts.strategy import StrategyDSL
 from syntha_engine.data import Dataset, SettlementTable
 from syntha_engine.runner import (
@@ -180,6 +181,9 @@ def _distribution(
         "roi_quantiles": _quantiles(rois),
         "roi_mean": float(rois.mean()) if rois.size else None,
         "histogram": _histogram(rois),
+        # every variant, so a sweep can ask what the best of N configurations looks like by
+        # chance (PRD §15.4)
+        "roi_variants": [round(float(r), 6) for r in rois],
         "signals_filled_median": float(np.median(filled)) if filled.size else None,
         **extra,
     }
@@ -338,7 +342,12 @@ def buy_and_hold(
     return {
         "strategy": dsl.name,
         "method": "the built-in buy-and-hold strategy on this strategy's universe, with the same "
-        "execution, fees and starting capital; its own sizing and constraints",
+        "execution, fees and starting capital; its own sizing and constraints"
+        + (
+            " (universe EITHER: it buys whichever side of each market is listed first, a coin-flip side)"
+            if request.strategy.universe.side == Side.EITHER
+            else ""
+        ),
         "sizing": strategy.sizing.model_dump(mode="json"),
         "constraints": strategy.constraints.model_dump(mode="json"),
         "roi": m["roi"],

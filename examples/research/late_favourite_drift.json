@@ -1,0 +1,70 @@
+{
+  "dsl_version": 1,
+  "name": "Late Favourite Drift",
+  "description": "Research candidate — not a trading recommendation. Buys an outcome between 0.60 and 0.85 that gained ≥ 5% over the last hour within 24 hours of the scheduled end, and holds to settlement: tests whether late information is under-reacted to.",
+  "universe": {
+    "side": "BUY_YES",
+    "min_volume_asof": 10000
+  },
+  "entry": {
+    "all": [
+      {
+        "feature": "price",
+        "params": {},
+        "op": "gte",
+        "value": 0.6
+      },
+      {
+        "feature": "price",
+        "params": {},
+        "op": "lte",
+        "value": 0.85
+      },
+      {
+        "feature": "price_change_pct",
+        "params": {
+          "lookback_minutes": 60
+        },
+        "op": "gte",
+        "value": 0.05
+      },
+      {
+        "feature": "time_to_resolution_minutes",
+        "params": {},
+        "op": "lte",
+        "value": 1440
+      },
+      {
+        "feature": "traded_volume",
+        "params": {
+          "lookback_minutes": 60
+        },
+        "op": "gte",
+        "value": 200
+      },
+      {
+        "feature": "staleness_minutes",
+        "params": {},
+        "op": "lte",
+        "value": 10
+      }
+    ]
+  },
+  "sizing": {
+    "mode": "PCT_OF_EQUITY",
+    "value": 0.05,
+    "max_notional_per_trade": 50.0,
+    "min_order_policy": "ROUND_UP",
+    "round_up_max_multiple": 2.0
+  },
+  "exit": {
+    "any": []
+  },
+  "constraints": {
+    "max_open_positions": 10,
+    "max_total_exposure_pct": 0.6,
+    "max_positions_per_event": 1,
+    "cooldown_minutes_per_market": 0,
+    "allow_reentry_same_market": false
+  }
+}

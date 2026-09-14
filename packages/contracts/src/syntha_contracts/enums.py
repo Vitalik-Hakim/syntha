@@ -4,10 +4,13 @@ from enum import StrEnum
 
 
 class Side(StrEnum):
-    """§3.3 — there is no shorting; short YES is expressed as BUY_NO."""
+    """§3.3 — there is no shorting; short YES is expressed as BUY_NO. EITHER makes both tokens of
+    each market candidates, so the entry rules choose the side (a price ≥ 0.9 rule buys the
+    favourite, whichever outcome that is); a market never holds both sides at once."""
 
     BUY_YES = "BUY_YES"
     BUY_NO = "BUY_NO"
+    EITHER = "EITHER"
 
 
 class FillStatus(StrEnum):

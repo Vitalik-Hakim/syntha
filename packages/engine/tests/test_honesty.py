@@ -188,3 +188,30 @@ def test_no_signals_means_no_null_distribution() -> None:
 def test_share_beaten_counts_ties_half() -> None:
     assert H.share_beaten(1.0, np.array([0.0, 1.0, 2.0, 1.0])) == 50.0
     assert H.share_beaten(1.0, np.array([])) is None
+
+
+def test_lean_replay_matches_when_holding_to_resolution() -> None:
+    """Without exit rules a lean run skips bars while holding; it must still land on every
+    settlement and reproduce the real run exactly."""
+    ds, st = _planted()
+    st = SettlementTable(
+        {
+            "a": Settlement("YES", T0 + 90 * 60, T0 + 88 * 60),
+            "b": Settlement("NO", T0 + 95 * 60, None),
+        }
+    )
+    request = _request(permutations=0, random_baselines=0)
+    request = request.model_copy(
+        update={
+            "strategy": request.strategy.model_copy(
+                update={"exit": request.strategy.exit.model_copy(update={"any": []})}
+            )
+        }
+    )
+    prep = prepare(request, ds, st)
+    result = simulate(prep)
+    assert isinstance(result, BacktestResult)
+    assert result.metrics["exit_reasons"] == {"MARKET_RESOLVED": result.metrics["n_trades"]}
+    replay = simulate(prep, forced=H._schedule(prep, H._real_episodes(prep, result), "REPLAY"))
+    assert isinstance(replay, LeanOutcome)
+    assert replay.roi == result.metrics["roi"] and replay.n_trades == result.metrics["n_trades"]

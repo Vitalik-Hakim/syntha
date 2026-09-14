@@ -1,0 +1,55 @@
+{
+  "dsl_version": 1,
+  "name": "Favourite to Resolution (NO)",
+  "description": "Research candidate — not a trading recommendation. The same test on the second outcome token: buys NO priced ≥ 0.90 in the last 6 hours (fading longshots) and holds to settlement.",
+  "universe": {
+    "side": "BUY_NO",
+    "min_volume_asof": 10000,
+    "min_time_to_resolution_minutes": null
+  },
+  "entry": {
+    "all": [
+      {
+        "feature": "price",
+        "params": {},
+        "op": "gte",
+        "value": 0.9
+      },
+      {
+        "feature": "price",
+        "params": {},
+        "op": "lte",
+        "value": 0.985
+      },
+      {
+        "feature": "time_to_resolution_minutes",
+        "params": {},
+        "op": "lte",
+        "value": 360
+      },
+      {
+        "feature": "staleness_minutes",
+        "params": {},
+        "op": "lte",
+        "value": 10
+      }
+    ]
+  },
+  "sizing": {
+    "mode": "PCT_OF_EQUITY",
+    "value": 0.05,
+    "max_notional_per_trade": 50.0,
+    "min_order_policy": "ROUND_UP",
+    "round_up_max_multiple": 2.0
+  },
+  "exit": {
+    "any": []
+  },
+  "constraints": {
+    "max_open_positions": 10,
+    "max_total_exposure_pct": 0.6,
+    "max_positions_per_event": 1,
+    "cooldown_minutes_per_market": 0,
+    "allow_reentry_same_market": false
+  }
+}

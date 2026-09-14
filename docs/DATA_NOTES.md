@@ -206,6 +206,16 @@ matter for ingestion: CLOB `/prices-history` 1,000/10s; Data v2 `/v2/trades` 300
 `/v2/prices-history` 200/10s; Gamma `/markets` 300/10s. The PRD's conservative 5 req/s default
 sits far below every limit and is kept.
 
+**2026-09-14 addendum — a poisoned cursor, not a rate limit.** Listing August 2026 through
+`/markets/keyset` (about 460,000 markets, 4,600 pages) failed three times at page 4,612 with a
+Cloudflare HTML 403. It was not throttling: the same request failed at 8 req/s and at 4 req/s and
+from `curl` minutes later, while page 4,611's cursor, page 4,000's cursor and a fresh page 0 all
+returned 200 at the same moment. One specific opaque `after_cursor` value is rejected by the WAF,
+deterministically. Two changes: the listing resumes from the newest saved page of the same window
+(`fetch.saved_listing`), and on a 403 for a cursor it re-fetches the previous page one item
+shorter (`limit` 99, 98, …), which moves the page boundary and yields a different cursor
+(`polymarket.list_markets`). Callers de-duplicate markets by `conditionId`.
+
 ### Websocket — finding
 
 Source: `docs.polymarket.com/market-data/realtime-data.md`.
@@ -308,6 +318,155 @@ be optimised on it before the out-of-sample and robustness tooling (M5).
   −5.3% and +3.8% under the other two presets. No preset shows evidence of edge.
 - *The built-in Underdog carries a `spread_proxy` exit rule*, which is always null on v1 data
   (PRD §4.2), so it can never fire. Checklists show it as "no data".
+
+## M6 collections and strategy research — 2026-09-14
+
+**Collections.** Both use the liquid pre-filter (final Gamma volume ≥ $7,500, so strategies need
+`min_volume_asof` ≥ $10,000 to be survivorship-free) and are stratified by fee category (about 40 per
+category).
+
+| Collection | Role | Markets | Notes |
+| --- | --- | --- | --- |
+| `july-2026-liquid-400` | discovery | 400 | seed 20260916; sampled from the saved July listing |
+| `june-2026-liquid-400` | holdout | 400 | seed 20260917; fresh Gamma listing; never used to design or tune anything |
+
+The normalized layer now holds 1,670 markets and 124.7M price bars. A full rebuild takes 33
+minutes.
+
+**Method.**
+1. Five candidates were written from known prediction-market effects before looking at outcomes
+   (favourite–longshot bias on both sides, late drift, overreaction, momentum).
+2. A calibration of price against outcome on July only (`tools/research/calibration.py`) added two
+   longshot candidates.
+3. All seven were screened on July under Realistic ($1,000, seed 1).
+4. All seven were then run **unchanged** on June.
+
+Every run is persisted and browsable in the app (BT-20260914-00015 to -00028).
+
+**July calibration** (all volumes, both tokens): tokens priced 0.03–0.10 paid out 2–8 cents more
+than their price at every offset from −72 h to +1 h, and 0.90–0.97 favourites correspondingly less.
+That is the *reverse* of the classic favourite–longshot bias. The standard errors (±4–7 cents, about
+30 markets per cell, correlated across offsets) are as large as the effect. Near-certain outcomes
+(0.97+) in the last two hours earned +0.3 to +0.5 cents gross, less than one tick of slippage.
+
+**Results** (Realistic, ROI with bootstrap 90% CI and permutation percentile):
+
+| Strategy | July (discovery) | June (holdout) |
+| --- | --- | --- |
+| Momentum Breakout | **+5.89%** (−3.6..+15.8), 97% | **−6.66%** (−18.2..+5.1), 6% |
+| Overreaction Fade | +2.54% (−2.2..+8.1), 6% | +1.01% (−4.8..+7.2), 66% |
+| Favourite to Resolution (YES) | −3.17% (−13.2..+4.3), 82% | +3.03% (+1.9..+4.2), 100% |
+| Late Favourite Drift | −2.96% (−21.9..+14.6), 68% | +9.22% (−3.0..+19.0), 54% |
+| Longshot to Resolution (YES) | −3.80% (−6.3..−1.4), 16% | +4.61% (−0.8..+11.8), 95% |
+| Favourite to Resolution (NO) | −3.39% (−13.4..+3.0), 40% | +0.04% (−3.4..+2.8), 86% |
+| Longshot to Resolution (NO) | −2.39% (−5.9..+1.6), 7% | −5.98% (−8.5..−3.6), 1% |
+
+**Reading.**
+- **No candidate is robustly profitable.** July's best result, Momentum Breakout at +5.89% and
+  the 97th percentile, is exactly the best-of-N illusion the honesty layer exists for: it lost
+  6.66% on June.
+- **Four of seven flip sign between months.** With 10–40 trades per run, one month of markets
+  cannot separate an edge from the month's regime.
+- **Side matters through base rates.** Buy-and-hold on the YES (first-outcome) side made −0.65% in
+  July and +24.7% in June; on the NO side, −5.0% and −18.6%. YES-side strategies inherit that tide.
+  The permutation test controls for it (same side, same moments); raw ROI does not.
+- **Leads worth more data, not money:**
+  - Overreaction Fade was positive in both months, but its intervals span zero.
+  - Favourite to Resolution (YES) was clearly positive in June only.
+- **Consistent loser:** buying NO longshots.
+- **The longshot calibration did not survive execution:** buying a 5-cent outcome costs about
+  20% in one tick.
+
+**What it would take to find a real edge.** More independent months (each adds about 400 markets,
+~30 minutes of fetching and a longer rebuild), then one pre-registered test pooled across months,
+with the number of configurations tried reported alongside. Parameter sweeps belong to v2 (PRD
+§18), with out-of-sample splits and multiple-comparison accounting.
+
+## M7 strategy search — 2026-09-14
+
+Protocol: docs/RESEARCH_PROTOCOL.md (written first). Data: five liquid 400-market months,
+March–May 2026 for discovery, June–July for the holdout. Full tables: `data/research/*/table.md`.
+
+**Stage 1 (pre-registered, 40 configurations on March–May, Realistic, $1,000): nothing met the
+rule.** Expected best-of-40 by chance: +4.9% pooled ROI (95th percentile +10.3%).
+
+| # | Configuration | Pooled ROI | 90% CI | Months + | Trades | Perm | Mar | Apr | May |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | Longshot to Resolution 0.10–0.20 within 24h | +10.3% | −6.7% to +30.2% | 3/3 | 95 | 92% | +8.0% | +3.5% | +19.5% |
+| 2 | Favourite to Resolution (YES) [M6] | +2.7% | −0.7% to +5.6% | 2/3 | 85 | 80% | +7.1% | +2.9% | −1.9% |
+| 3 | Longshot to Resolution 0.03–0.10 within 24h | +1.2% | −14.0% to +23.4% | 1/3 | 84 | 4% | −11.4% | −13.0% | +28.2% |
+| 4 | Favourite to Resolution ≥0.95 within 6h | +1.2% | −1.3% to +3.8% | 2/3 | 150 | 86% | +3.9% | +2.4% | −2.6% |
+| 9 | Early Favourite ≥0.9 to Resolution | +0.6% | +0.5% to +0.8% | 3/3 | 30 | 73% | +0.3% | +0.6% | +1.0% |
+| 15 | Momentum Breakout [M6] | −0.5% | −3.3% to +2.3% | 2/3 | 74 | 42% | +0.3% | −3.3% | +1.4% |
+| 23 | Overreaction Fade [M6] | −2.6% | −6.0% to +0.8% | 1/3 | 48 | 12% | −2.8% | +0.1% | −4.9% |
+| 34–40 | Late Drift to Resolution (all six) | −7.5% to −13.3% | all below zero at the top | 0/3 | 149–166 | 11–48% | | | |
+
+Reading:
+- The two M6 "leads" did not survive three more months: Overreaction Fade −2.6%, Momentum
+  Breakout −0.5%.
+- Every hold-to-resolution *favourite* configuration at 0.85 or 0.90 lost money; only ≥ 0.95
+  scraped a positive pooled result with a CI spanning zero. Tokens at 0.85–0.95 were, on average,
+  overpriced in these months.
+- The mirror of that, cheap tokens priced 0.10–0.20 in the last day, is the one configuration
+  positive in every month. Its P&L is lumpy (most longshots lose everything, a few pay 5–10×), so
+  95 trades give a CI from −7% to +30%, and it sits exactly where the best of 40 lands by chance
+  5% of the time. Suggestive, not evidence.
+- *Late Drift* (buy the side that rose in the last day, hold) is a consistent loser in every
+  setting and every month: late rises overshoot.
+- VWAP reversion and the exit-based swing families are dominated by costs (cost ratios 1–2.5).
+- Buy-and-hold on an `EITHER` universe (coin-flip side) was −13% pooled: buying at random loses
+  the spread and the fees, which is the right null.
+
+**Stage 2 (exploratory holdout, June + July; docs/RESEARCH_PROTOCOL.md):** the six nearest
+misses ran once on the holdout months.
+
+| Configuration | Jun | Jul | Pooled | 90% CI | Perm | Conservative |
+| --- | --- | --- | --- | --- | --- | --- |
+| Longshot to Resolution 0.10–0.20 within 24h | **+41.8%** | **+7.0%** | **+24.4%** | +4.0% to +48.0% | 98% | +15.5% (2/2) |
+| Favourite to Resolution (YES) | +3.0% | −3.2% | −0.1% | −5.4% to +3.7% | 91% | −1.0% |
+| Early Favourite ≥0.9 | +0.1% | −0.7% | −0.3% | −2.4% to +1.3% | 98% | −0.6% |
+| Favourite ≥0.95 within 6h | −0.1% | −1.8% | −1.0% | −3.2% to +0.9% | 78% | −1.1% |
+| Longshot 0.03–0.10 within 24h | +5.2% | −9.3% | −2.0% | −8.5% to +6.1% | 36% | +16.8% (1/2) |
+| Longshot to Resolution (NO) | −6.0% | −2.4% | −4.2% | −6.3% to −1.9% | 4% | −6.7% |
+
+The *Late Fade* mirror grid (buy the side that fell late), read off the discovery data, made
++12.9% in-sample and +3.7% / one negative month on the holdout, beaten by chance 42% of the time:
+rejected. The lesson generalises: a rule derived from a loss on the same data is not a finding.
+
+**The one survivor: late longshots.** Buy either outcome priced 0.10–0.20 within 24 hours of the
+scheduled end, hold to settlement, 2% of starting capital per trade, at most 40 positions.
+Positive in all five months (Mar +8.0%, Apr +3.5%, May +19.5%, Jun +41.8%, Jul +7.0%; ≈ +16%
+per month pooled), and above its permuted and random variants every month. Why it is *not*
+called an edge yet: it was the best of 40 on discovery (which alone is consistent with chance
+at the 5% level), it reached the holdout through the exploratory branch, its P&L is a few large
+payoffs against many total losses, and five months of 2026 cannot show persistence. Stage 3 of
+the protocol (two untouched months) was the pre-registered next test, and it failed:
+February −29.6%, August −4.0% (Realistic), both negative under Conservative too. Pooled over
+the four out-of-sample months (Jun, Jul, Feb, Aug) it is +3.8% with a 90% CI of −9.9% to +19.0%.
+**Not confirmed; the evidence now favours no edge.**
+
+*Anatomy of the failure* (`data/research/anatomy-*.json`, February + August): 69 trades, 7
+winners (10% paid out against a mean price of 0.16, below fair), net −$336. Thirty of the trades
+were crypto longshots and all but one lost (−$461); in the five earlier months the same category
+had a 38% payout rate and was profitable, while sports, a loser then, gained here. The category
+split seen after stage 2 was noise, exactly as it was flagged. Costs were irrelevant to the
+result (fees $19, slippage $18).
+
+*Anatomy of the survivor* (146 trades over five months, `data/research/anatomy-*.json`):
+five-month pooled ROI +16.0% per month, bootstrap 90% CI +2.3% to +30.5%, 2.5% of resamples lose.
+26% of trades paid out against a mean entry of 0.19 (fair would be 19%), winners paid 5.2× on
+average, fees and slippage were only $60 on $1,341 traded. But **five trades made $786 of the
+$797**: without them the result is +$11, and only 2 of the 5 months stay positive without their
+single best trade. Each is a different market and event, so they are independent wins, not one
+bet, but a strategy whose result is five trades is a strategy whose next five months can
+easily be flat. Two more caveats: 16 fills landed above 0.25 because the next bar's prints had
+already jumped (the engine has no limit-price semantics; a real order would not have filled at
+0.5–0.99) — without them the pooled ROI is +13.4% with a CI of +0.3% to +28.2%; and by category
+the gain is entirely outside sports (90 non-sports trades +$935, 33% winners; 56 sports trades
+−$137, 14% winners), a split noticed after the fact and therefore not something to act on.
+Browsable runs: June
+BT-20260914-00041 (Realistic), -00042 (Optimistic), -00043 (Conservative); July -00044, -00045,
+-00046; February and August BT-20260914-00049 (Conservative), BT-20260914-00047 (Realistic), BT-20260914-00048 (Optimistic), BT-20260914-00050 (Realistic), BT-20260914-00052 (Conservative), BT-20260914-00051 (Optimistic).
 
 ---
 

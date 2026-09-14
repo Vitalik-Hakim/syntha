@@ -182,15 +182,21 @@ class _Quality:
     markets_dropped: list[dict[str, str]] = field(default_factory=list)
     entry_funnel: Counter[str] = field(default_factory=Counter)
     near_misses: dict[str, Any] = field(default_factory=dict)
+    min_size_causes: Counter[str] = field(default_factory=Counter)
     episodes: list[tuple[int, int, str]] = field(default_factory=list)
 
 
-def _token_for_side(dataset: Dataset, condition_id: str, side: Side) -> str | None:
-    idx = 0 if side == Side.BUY_YES else 1
-    for t in dataset.tokens.values():
-        if t.condition_id == condition_id and t.outcome_index == idx:
-            return t.clob_token_id
-    return None
+def _tokens_for_side(dataset: Dataset, condition_id: str, side: Side) -> list[str]:
+    wanted = {Side.BUY_YES: (0,), Side.BUY_NO: (1,), Side.EITHER: (0, 1)}[side]
+    return [
+        t.clob_token_id
+        for t in dataset.tokens.values()
+        if t.condition_id == condition_id and t.outcome_index in wanted
+    ]
+
+
+def _side_of(outcome_index: int) -> str:
+    return Side.BUY_YES.value if outcome_index == 0 else Side.BUY_NO.value
 
 
 @dataclass
@@ -253,11 +259,10 @@ def prepare(
         wanted = [c for c in wanted if (dataset.markets[c].category or "").lower() in cats]
     tokens: list[str] = []
     for cid in wanted:
-        tok = _token_for_side(dataset, cid, universe.side)
-        if tok is None:
+        found = _tokens_for_side(dataset, cid, universe.side)
+        if not found:
             q.markets_dropped.append({"condition_id": cid, "reason": "NO_TOKEN_FOR_SIDE"})
-        else:
-            tokens.append(tok)
+        tokens.extend(found)
     tokens.sort()
 
     firsts = [
@@ -537,6 +542,29 @@ def simulate(
     notional_prefix: dict[str, np.ndarray] = {}  # small LRU: traces cluster by token
     last_blocked_k: dict[str, int] = {}
 
+    capacity: dict[int, tuple[Decimal, Decimal]] = {}
+
+    def capacity_block(tok: str, k: int, min_order_size: Decimal) -> str | None:
+        """A new signal needs room for at least the market's minimum order: otherwise the
+        portfolio is full, which is a constraint, not a missed trade. Uses bar-k marks and cash
+        before this bar's executions; the order is sized again when it executes."""
+        if k not in capacity:
+            capacity.clear()
+            positions = portfolio.positions_value(marks())
+            equity = portfolio.cash + positions
+            headroom = Decimal(str(constraints.max_total_exposure_pct)) * equity - positions
+            capacity[k] = (portfolio.cash, headroom)
+        cash, headroom = capacity[k]
+        price = prepared[tok].frame.price_at(k)
+        if math.isnan(price):
+            return None
+        needed = min_order_size * fills.to_decimal(price)
+        if cash < needed:
+            return "insufficient_cash"
+        if headroom < needed:
+            return "exposure_full"
+        return None
+
     def universe_checks(tok: str, k: int) -> list[dict[str, Any]]:
         """The universe filters at bar k, in funnel order, with actual values (PRD §13.1). Computed
         per bar from the same data as the vectorized gates."""
@@ -653,8 +681,13 @@ def simulate(
             q.unexecutable[row["entry_rule_trace"]["execution"].get("reason") or "UNKNOWN"] += 1
         else:
             q.counters["signals_rejected_min_size"] += 1
+            sizing = row["entry_rule_trace"].get("sizing") or {}
+            q.min_size_causes[sizing.get("below_min_cause") or "unknown"] += 1
+            if sizing.get("below_min_cause") and sizing.get("round_up_blocked_by") is None:
+                q.counters["min_size_rejections_round_up_would_fill"] += 1
 
     # ------------------------------------------------------------ the loop
+    settle_keys = np.array(sorted(settle_at), dtype=np.int64)
     k = 0
     report_every = max(grid.n // 100, 1)
     next_report = 0
@@ -662,10 +695,17 @@ def simulate(
         if k >= next_report:
             report("simulate", k / grid.n)
             next_report = k + report_every
-        if not portfolio.open and not pending:
+        # Skip to the next bar where anything can happen. With no positions that is the next
+        # candidate bar. A lean run (no equity rows) of a strategy without exit rules can also skip
+        # while holding: only candidates and settlements can change anything.
+        if not pending and (not portfolio.open or (lean and not evaluate_exits)):
             j = int(np.searchsorted(ev_k, k, "left"))
             nxt = int(ev_k[j]) if j < ev_k.size else grid.n
-            if not lean:
+            if portfolio.open:
+                js = int(np.searchsorted(settle_keys, k, "left"))
+                if js < settle_keys.size:
+                    nxt = min(nxt, int(settle_keys[js]))
+            elif not lean:
                 for kk in range(k, nxt):
                     equity_rows.append(
                         EquityRow(grid.ts(kk), portfolio.cash, ZERO, 0, portfolio.realized_pnl)
@@ -738,6 +778,11 @@ def simulate(
         # 4. entries
         pend_entries = [sig for sig in pending if sig.kind == "ENTRY"]
         pend_tokens = {sig.token_id for sig in pend_entries}
+        # One position per market: with EITHER the complementary token is a different token id
+        # but the same market, and holding both sides is a hedge, not a trade.
+        held_conditions = {p.condition_id for p in portfolio.open.values()} | {
+            dataset.tokens[t].condition_id for t in pend_tokens
+        }
         pend_events = [
             dataset.markets[dataset.tokens[sig.token_id].condition_id].event_id
             for sig in pend_entries
@@ -752,7 +797,7 @@ def simulate(
             td = dataset.tokens[tok]
             terms = dataset.markets[td.condition_id]
             blocked: str | None
-            if tok in portfolio.open or tok in pend_tokens:
+            if tok in portfolio.open or tok in pend_tokens or td.condition_id in held_conditions:
                 blocked = "already_holding"
             elif len(portfolio.open) + len(pend_tokens) >= constraints.max_open_positions:
                 blocked = "max_open_positions"
@@ -760,6 +805,8 @@ def simulate(
                 blocked = portfolio.can_open(
                     tok, td.condition_id, terms.event_id, ts, constraints, pend_tokens, pend_events
                 )
+                if not blocked and ep is None and terms.min_order_size is not None:
+                    blocked = capacity_block(tok, k, terms.min_order_size)
             if blocked:
                 q.blocked_by_constraint[blocked] += 1
                 if ep is not None:
@@ -966,7 +1013,7 @@ def _execute_entry(
     terms = frame.terms
     ts = grid.ts(k)
     cfg = request.execution
-    side = request.strategy.universe.side.value
+    side = _side_of(frame.token.outcome_index)
 
     def reject(
         status: FillStatus,
@@ -1033,14 +1080,22 @@ def _execute_entry(
         liquidity_cap=quote.max_shares,
         fee=fee_terms,
         share_precision=request.share_precision,
+        min_order_size=terms.min_order_size,
     )
-    sizing_trace = {
+    sizing_trace: dict[str, Any] = {
         "mode": request.strategy.sizing.mode.value,
         "requested_notional": _q6(sized.requested_notional),
         "final_notional": _q6(sized.final_notional),
         "size_binding_constraint": sized.binding,
         "equity": _q6(equity),
+        "min_order_policy": request.strategy.sizing.min_order_policy,
     }
+    if sized.rounded_up_to_min:
+        sizing_trace["rounded_up_to_min_size"] = True
+        q.counters["entries_rounded_up_to_min_size"] += 1
+    if sized.below_min_cause is not None:
+        sizing_trace["below_min_cause"] = sized.below_min_cause
+        sizing_trace["round_up_blocked_by"] = sized.round_up_blocked_by
     fee = fee_amount(sized.shares, quote.fill_price, fee_terms)
     execution = {
         **quote.detail,
@@ -1373,6 +1428,10 @@ def _build_result(
         "signals_unexecutable": c["signals_unexecutable"],
         "signals_unexecutable_reasons": dict(sorted(q.unexecutable.items())),
         "signals_rejected_min_size": c["signals_rejected_min_size"],
+        # why orders fell below the market minimum, and how many ROUND_UP would have filled
+        "signals_rejected_min_size_by_cause": dict(sorted(q.min_size_causes.items())),
+        "min_size_rejections_round_up_would_fill": c["min_size_rejections_round_up_would_fill"],
+        "entries_rounded_up_to_min_size": c["entries_rounded_up_to_min_size"],
         "signals_pending_at_end": c["signals_pending_at_end"],
         "signals_cancelled_by_settlement": c["signals_cancelled_by_settlement"],
         "signals_blocked_by_constraint": dict(sorted(q.blocked_by_constraint.items())),

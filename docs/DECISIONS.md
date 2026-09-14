@@ -317,3 +317,128 @@ row and noting the date.
   longer calls it an upper bound.
 - **Also:** an infinite profit factor adds a low-sample warning (§12.3). `ENGINE_VERSION` is
   0.5.0. Runs from before 0.5.0 show "honesty layer not computed; re-run".
+
+### M6
+
+- **Minimum order size: diagnosed before changing anything.** A $100 Favourite Drift run showed
+  1,107 REJECTED_MIN_SIZE rows against 20 fills. Classifying each by cause:
+  - **66 were sizing:** 5% of equity at a 0.98 price is 4.98 shares, just under the 5-share
+    minimum.
+  - **1,041 were exposure:** the 25% cap was already used. These were not missed trades. The same
+    held conditions kept re-signalling into a full portfolio, inflating "signals generated" from
+    26 genuine signals to 1,129. The doomed attempts also held position slots other markets could
+    have used.
+
+  Three changes, none of which invents a fill:
+  - **Capacity is a constraint, not a signal.** A *new* signal episode is blocked
+    (`signals_blocked_by_constraint`: `insufficient_cash` / `exposure_full`) when cash or exposure
+    headroom cannot buy the market minimum at the bar's price. Retries of an episode already
+    under way are unchanged, which keeps the `cash_constrained` golden fixture intact.
+  - **`Sizing.min_order_policy`:** `SKIP` (default, PRD-literal) or `ROUND_UP`. `ROUND_UP` places
+    the minimum when max notional, cash (fee-inclusive), exposure headroom and the liquidity cap
+    all allow it, and the minimum is at most `round_up_max_multiple` (default 2) times the requested
+    notional. Liquidity-capped orders stay rejected: rounding those up would invent liquidity. The
+    built-in examples use `ROUND_UP`.
+  - **Every rejection records its cause**
+    (`sizing.below_min_cause`, `round_up_blocked_by`; `data_quality.signals_rejected_min_size_by_cause`,
+    `min_size_rejections_round_up_would_fill`, `entries_rounded_up_to_min_size`). The results page
+    names the lever for each cause.
+
+  On that $100 configuration, REJECTED_MIN_SIZE falls from 1,107 to 54 (SKIP) and to 2 (ROUND_UP).
+  Because freed slots now go to other markets, results change, so ENGINE_VERSION is 0.6.0.
+- **Strategies are versioned documents.** `GET/POST /api/strategies`,
+  `POST /api/strategies/{id}/versions`, `GET /api/strategies/{id}/diff?versions=…`,
+  `GET /api/strategies/features` (the registry, for the builder). The name identifies the
+  strategy. An identical document reuses its version (`created: false`), and versions carry a
+  change note (migration 0009). Running a configuration also records its version, so every run
+  links to one.
+- **Builder** (`/strategies/new`, `/strategies/[id]/edit`): a form over the whole DSL (universe,
+  entry with feature and parameter pickers from the registry, sizing including the minimum-order
+  policy, ordered exits, constraints) plus a JSON tab. Validation is the API's, debounced as you
+  type. "Save and run" opens the simulator on the saved version.
+- **Fork, rerun, compare.**
+  - `POST /api/backtests/{id}/rerun {overrides, all_presets}` deep-merges overrides into the
+    parent's request.
+  - The simulator's `?fork=<run>` prefills every setting from a run, and `POST /api/backtests?parent=`
+    records `backtest_runs.parent_run_id`.
+  - Run pages link "Forked from … · compare with parent".
+  - `GET|POST /api/compare` returns the diff of the configurations plus engine and dataset
+    versions (which also change results), 23 metrics with server-computed deltas against the
+    first run, and LTTB-downsampled equity lines.
+  - The runs table selects 2–6 runs to compare.
+- **Research reports:** `GET /api/backtests/{id}/report.md` and `GET /api/compare/report.md`,
+  self-contained Markdown. They open with the disclaimer and the honesty verdict before any
+  headline number, and end with assumptions and reproducibility identifiers.
+- **Dev only:** the Next proxy timeout is 15 minutes, so inline-mode runs are not cut off at 30 s.
+- **Acceptance evidence.** A browser script:
+  1. forked BT-20260914-00011 and changed capital from $1,000 to $2,000;
+  2. reran it (BT-20260914-00014);
+  3. compared it with its parent (the diff was exactly `starting_capital`; 23 metric rows, equity
+     overlay);
+  4. downloaded both reports;
+  5. built a strategy from an example, saved v1, edited the stop loss and saved v2 (the version
+     diff was exactly `exit.any[1].value 0.2 → 0.35`);
+  6. compared two runs picked in the runs table.
+
+  No console errors.
+- **Strategy research** (docs/DATA_NOTES.md, "M6 collections and strategy research"):
+  - Seven candidates were screened on `july-2026-liquid-400` and validated unchanged on the
+    `june-2026-liquid-400` holdout, with `tools/research/calibration.py` and
+    `tools/research/run_candidates.py`; runs are persisted and browsable.
+  - None is robustly profitable. July's best (Momentum Breakout, +5.9% and 97th percentile) lost
+    6.7% on June.
+  - The two leads worth more data, Overreaction Fade and Favourite to Resolution (YES), are added as
+    built-in examples. Their descriptions carry the out-of-sample record, not a recommendation.
+  - `execute_run(…, loaded=…)` lets a research batch share one dataset load.
+
+### M7 — strategy search (engineering)
+
+- **`universe.side: EITHER`.** Both tokens of every market are candidates and the entry rules
+  choose the side, so one "price ≥ 0.9" rule buys the favourite whichever outcome it is, and a
+  "price ≤ 0.1" rule buys the longshot. Each trade row records the side actually bought
+  (`BUY_YES` / `BUY_NO`). A market never holds both sides: the complementary token counts as
+  `already_holding`. The loader loads both tokens; the permutation test may move an episode to
+  the other side of the same market (a legitimate same-category alternative); buy-and-hold on an
+  `EITHER` universe buys whichever side is listed first, which makes it a coin-flip-side benchmark
+  and is labelled as such. Why: the favourite–longshot and momentum hypotheses are about the
+  *price level*, not about YES, and one-sided runs inherit the month's YES base rate
+  (docs/DATA_NOTES.md, M6).
+- **Null runs skip while holding.** A lean simulation (no equity rows) of a strategy without exit
+  rules jumps from event to event (next candidate bar, next settlement) instead of walking every
+  bar with open positions. Verified by a lean replay of the real episodes reproducing the real
+  ROI on the planted fixture (`test_lean_replay_matches_when_holding_to_resolution`) and on real
+  data. Real runs are unchanged: they still mark every bar.
+- **Research tooling, outside the app.** `tools/research/candidates.py` is the pre-registered
+  grid; `sweep.py` runs it in memory, one process per collection, resumable, writing one JSONL
+  line per (configuration, collection) with the trades' P&L and every permutation variant;
+  `pooled.py` pools across months, applies the selection rule and computes the best-of-N null
+  (PRD §15.4) from the stored variants. Sweeps never write to `backtest_runs`; finalists are
+  persisted with `run_candidates.py` so they are browsable. The protocol itself is
+  docs/RESEARCH_PROTOCOL.md, written before the discovery run.
+- **Data.** `march|april|may-2026-liquid-400`: fresh Gamma listings for each month, same liquid
+  pre-filter and stratification as June and July, fetched in parallel at 8 req/s each (Gamma's
+  limit is 30/s).
+- **Findings** (docs/DATA_NOTES.md, "M7 strategy search"; docs/RESEARCH_PROTOCOL.md): the
+  pre-registered rule selected nothing from 40 configurations. The exploratory holdout kept one
+  survivor, *Late Longshot to Resolution* (either outcome at 0.10–0.20 within 24 h of the end,
+  hold), positive in all five months and +24.4% pooled on the holdout; it is shipped as a built-in
+  example labelled **unconfirmed** with its record in the description, and stage 3 of the protocol
+  (two untouched months) is pre-registered before it can be called anything more. The Late Fade
+  mirror grid was rejected on the holdout. The two M6 leads were rejected. `EITHER` is now the
+  default side in the research grid; built-ins that came from single-side research keep their side.
+- **Engine limitation found by the anatomy:** `TRADE_PRINT` fills at the next bar's VWAP with no
+  reference to the signal price. When a market jumps within the decision lag, a "buy at 0.15"
+  signal fills at 0.5–0.99, which a real limit order never would. 16 of the survivor's 146 fills
+  were like this (they added +$128). A `max_fill_vs_signal` guard on the execution model is the
+  fix; it is a v2 execution change and is listed there rather than patched into M7's results.
+- **Resumable market listing, and routing around a poisoned cursor.** `sample` continues a
+  window's keyset listing from the newest saved page instead of restarting, and when Cloudflare
+  rejects one cursor value with a 403 (August 2026, page 4,612, deterministic; docs/DATA_NOTES.md)
+  it re-fetches the previous page one item shorter so the boundary, and the cursor, change. Pages
+  are written to the raw store exactly as before; the manifest is only written when the sample
+  completes.
+- **Stage-3 verdict.** The survivor failed the pre-registered untouched-months test (Feb −29.6%,
+  Aug −4.0%). It stays as a built-in example labelled as a failed test, with the full record in
+  its description, because a documented negative from a pre-registered search is the product's
+  point (PRD §15). Seven months of data are in the normalized layer (3,669 markets, 247 M bars;
+  a full rebuild now takes about 41 minutes).

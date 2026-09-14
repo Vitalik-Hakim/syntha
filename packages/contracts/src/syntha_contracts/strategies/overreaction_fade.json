@@ -1,0 +1,79 @@
+{
+  "dsl_version": 1,
+  "name": "Overreaction Fade",
+  "description": "Research lead — not a trading recommendation, and not a validated edge. Buys a mid-priced outcome (0.25–0.75) after a ≥ 15% fall in 15 minutes on ≥ 3× usual volume; exits +10%, −15% or 6 h. Record (Realistic, $1,000): July 2026 +2.5%, June 2026 +1.0%, both with 90% CIs spanning zero; under Conservative −0.9% and −0.2%. The apparent edge depends on execution assumptions. Stage-1 pooled Mar–May 2026: −2.6% (1/3 months positive).",
+  "universe": {
+    "side": "BUY_YES",
+    "min_volume_asof": 10000,
+    "min_time_to_resolution_minutes": 60
+  },
+  "entry": {
+    "all": [
+      {
+        "feature": "price",
+        "params": {},
+        "op": "gte",
+        "value": 0.25
+      },
+      {
+        "feature": "price",
+        "params": {},
+        "op": "lte",
+        "value": 0.75
+      },
+      {
+        "feature": "price_change_pct",
+        "params": {
+          "lookback_minutes": 15
+        },
+        "op": "lte",
+        "value": -0.15
+      },
+      {
+        "feature": "volume_ratio",
+        "params": {
+          "lookback_minutes": 15,
+          "baseline_minutes": 240
+        },
+        "op": "gte",
+        "value": 3
+      },
+      {
+        "feature": "staleness_minutes",
+        "params": {},
+        "op": "lte",
+        "value": 10
+      }
+    ]
+  },
+  "sizing": {
+    "mode": "PCT_OF_EQUITY",
+    "value": 0.05,
+    "max_notional_per_trade": 50.0,
+    "min_order_policy": "ROUND_UP",
+    "round_up_max_multiple": 2.0
+  },
+  "exit": {
+    "any": [
+      {
+        "type": "TAKE_PROFIT_PCT",
+        "value": 0.1
+      },
+      {
+        "type": "STOP_LOSS_PCT",
+        "value": 0.15
+      },
+      {
+        "type": "MAX_HOLD_MINUTES",
+        "value": 360
+      }
+    ]
+  },
+  "constraints": {
+    "max_open_positions": 10,
+    "max_total_exposure_pct": 0.6,
+    "max_positions_per_event": 1,
+    "cooldown_minutes_per_market": 120,
+    "allow_reentry_same_market": true
+  }
+}

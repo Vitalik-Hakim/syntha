@@ -108,6 +108,7 @@ class RunSummary(BaseModel):
         default=None, description="Percent of permuted variants this run beat (PRD §15.3)"
     )
     buy_and_hold_roi: float | None = None
+    parent_run_id: str | None = Field(default=None, description="The run this one was forked from")
 
 
 class RunDetail(RunSummary):
@@ -306,3 +307,102 @@ class Replay(BaseModel):
     near_miss: NearMissDetail | None
     prev_seq: int | None
     next_seq: int | None
+
+
+# ------------------------------------------------------------------ M6: iteration
+
+
+class FeatureInfo(BaseModel):
+    name: str
+    params: list[str]
+    definition: str
+    null_when: str
+
+
+class StrategyVersionInfo(BaseModel):
+    id: str
+    version: int
+    dsl_hash: str
+    created_at: datetime
+    note: str | None
+    dsl: StrategyDSL
+    runs: int
+    latest_run: RunSummary | None
+
+
+class StrategySummary(BaseModel):
+    id: str
+    name: str
+    description: str | None
+    created_at: datetime
+    updated_at: datetime
+    latest_version: int
+    versions: int
+    runs: int
+
+
+class StrategyDetail(BaseModel):
+    id: str
+    name: str
+    created_at: datetime
+    versions: list[StrategyVersionInfo] = Field(description="Newest first")
+
+
+class SaveStrategyRequest(BaseModel):
+    dsl: StrategyDSL
+    note: str | None = None
+
+
+class SaveVersionResponse(BaseModel):
+    strategy_id: str
+    version: StrategyVersionInfo
+    created: bool = Field(description="False when an identical version already existed")
+
+
+class DiffEntry(BaseModel):
+    path: str = Field(description="Dotted path into the document, e.g. strategy.exit.any[1].value")
+    values: list[Any] = Field(description="One value per compared item; null where absent")
+
+
+class StrategyDiff(BaseModel):
+    strategy_id: str
+    versions: list[int]
+    changes: list[DiffEntry]
+
+
+class RerunRequest(BaseModel):
+    overrides: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Merged into the parent run's BacktestRequest (objects merge, other values replace)",
+    )
+    all_presets: bool = False
+
+
+class RerunResponse(BaseModel):
+    parent_run_id: str
+    group_id: str | None
+    runs: list[CreateBacktestResponse]
+
+
+class ComparedMetric(BaseModel):
+    key: str
+    label: str
+    format: str = Field(description="usd | pct | count | ratio | percentile | text")
+    better: str | None = Field(description="higher | lower | None")
+    values: list[float | str | None]
+    deltas: list[float | None] = Field(
+        description="Value minus the first run's, computed server-side"
+    )
+
+
+class EquityLine(BaseModel):
+    run_id: str
+    ts: list[int]
+    equity: list[float]
+
+
+class Comparison(BaseModel):
+    runs: list[RunDetail]
+    config_diff: list[DiffEntry]
+    metrics: list[ComparedMetric]
+    equity: list[EquityLine]

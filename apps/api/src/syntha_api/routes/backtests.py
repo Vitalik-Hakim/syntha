@@ -18,9 +18,11 @@ import redis
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
 from syntha_api import replay as R
 from syntha_api.deps import ConnDep, SettingsDep
+from syntha_api.diff import merge
 from syntha_api.lttb import equity_indices
 from syntha_api.settings import Settings
 from syntha_contracts.api import (
@@ -33,6 +35,8 @@ from syntha_contracts.api import (
     NearMissRow,
     Replay,
     ReplayMarker,
+    RerunRequest,
+    RerunResponse,
     RunDetail,
     RunList,
     RunProgress,
@@ -51,7 +55,7 @@ router = APIRouter(prefix="/backtests", tags=["backtests"])
 
 RUN_COLUMNS = """id, status, strategy_name, collection, created_at, started_at, finished_at, config,
     config_hash, engine_version, dataset_version_id, seed, error, metrics, data_quality, manifest,
-    honesty, group_id, preset"""
+    honesty, group_id, preset, parent_run_id"""
 
 TRADE_COLUMNS = """t.seq, t.fill_status, t.condition_id, t.clob_token_id, t.side, t.signal_ts, t.entry_ts,
     t.entry_ref_price, t.entry_price, t.shares, t.notional, t.entry_fee, t.exit_ts, t.exit_price, t.exit_fee,
@@ -87,6 +91,7 @@ def _summary(row: tuple[Any, ...]) -> RunSummary:
         roi_ci90=summary.get("roi_ci90"),
         permutation_percentile=summary.get("permutation_percentile"),
         buy_and_hold_roi=summary.get("buy_and_hold_roi"),
+        parent_run_id=row[19],
     )
 
 
@@ -151,16 +156,28 @@ def _start(settings: Settings, run_id: str) -> RunStatus:
 
 @router.post("/presets", status_code=status.HTTP_201_CREATED)
 def create_preset_backtests(
-    request: BacktestRequest, conn: ConnDep, settings: SettingsDep
+    request: BacktestRequest,
+    conn: ConnDep,
+    settings: SettingsDep,
+    parent: Annotated[
+        str | None, Query(description="run this configuration was forked from")
+    ] = None,
 ) -> CreatePresetRunsResponse:
     """PRD §11.6 "Run all three": the request under each scenario preset, as one group. The
     request's own execution and fee settings are replaced."""
     _check_collection(conn, request)
+    if parent is not None:
+        _fetch_run(conn, parent)
     group_id = uuid.uuid4()
     run_ids: list[tuple[str, str]] = []
     try:
         for preset in PRESET_ORDER:
-            run_ids.append((preset, create_run(conn, request.with_preset(preset), group_id)))
+            run_ids.append(
+                (
+                    preset,
+                    create_run(conn, request.with_preset(preset), group_id, parent_run_id=parent),
+                )
+            )
     except FeatureError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     except NoDatasetVersion as exc:
@@ -177,11 +194,18 @@ def create_preset_backtests(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_backtest(
-    request: BacktestRequest, conn: ConnDep, settings: SettingsDep
+    request: BacktestRequest,
+    conn: ConnDep,
+    settings: SettingsDep,
+    parent: Annotated[
+        str | None, Query(description="run this configuration was forked from")
+    ] = None,
 ) -> CreateBacktestResponse:
     _check_collection(conn, request)
+    if parent is not None:
+        _fetch_run(conn, parent)
     try:
-        run_id = create_run(conn, request)
+        run_id = create_run(conn, request, parent_run_id=parent)
     except FeatureError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     except NoDatasetVersion as exc:
@@ -221,6 +245,24 @@ def get_backtest(run_id: str, conn: ConnDep, settings: SettingsDep) -> RunDetail
         honesty=row[16],
         group=_group(conn, row[17]),
     )
+
+
+@router.post("/{run_id}/rerun", status_code=status.HTTP_201_CREATED)
+def rerun(run_id: str, body: RerunRequest, conn: ConnDep, settings: SettingsDep) -> RerunResponse:
+    """A new run from a previous run's configuration with overrides (PRD §14). Nothing is mutated:
+    the parent stays as it was and the new run records where it came from."""
+    row = _fetch_run(conn, run_id)
+    try:
+        request = BacktestRequest.model_validate(merge(row[7], body.overrides))
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc.errors(include_url=False)
+        ) from exc
+    if body.all_presets:
+        group = create_preset_backtests(request, conn, settings, parent=run_id)
+        return RerunResponse(parent_run_id=run_id, group_id=group.group_id, runs=group.runs)
+    single = create_backtest(request, conn, settings, parent=run_id)
+    return RerunResponse(parent_run_id=run_id, group_id=None, runs=[single])
 
 
 @router.get("/{run_id}/stream")

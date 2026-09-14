@@ -11,6 +11,11 @@ BUILTIN_STRATEGY_FILES = {
     "favourite_drift": "favourite_drift.json",
     "buy_and_hold_to_resolution": "buy_and_hold_to_resolution.json",
     "random_entry": "random_entry.json",
+    # Research leads from docs/DATA_NOTES.md (M6): shown with their out-of-sample record.
+    "overreaction_fade": "overreaction_fade.json",
+    "favourite_to_resolution_yes": "favourite_to_resolution_yes.json",
+    # M7 survivor (docs/RESEARCH_PROTOCOL.md): unconfirmed, shown with its five-month record.
+    "late_longshot_to_resolution": "late_longshot_to_resolution.json",
 }
 
 

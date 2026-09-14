@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
@@ -12,9 +13,13 @@ import {
   type BuiltinStrategy,
   type CollectionInfo,
   type PresetInfo,
+  type RunDetail,
+  type StrategyDetail,
   type StrategyDSL,
+  type StrategySummary,
 } from "@/lib/api/client";
-import { count, pct, usd } from "@/lib/format";
+import { describeDsl } from "@/lib/dsl";
+import { count, usd } from "@/lib/format";
 
 type CreateResponse = { run_id: string; status: string };
 type CreateGroupResponse = { group_id: string; runs: { run_id: string; preset: string | null }[] };
@@ -31,36 +36,29 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
   );
 }
 
-function describeDsl(dsl: StrategyDSL): string[] {
-  const lines: string[] = [];
-  const u = dsl.universe;
-  lines.push(`Buys ${u?.side === "BUY_NO" ? "NO" : "YES"} tokens${u?.categories ? ` in ${u.categories.join(", ")}` : ""}`);
-  if (u?.min_volume_asof != null) lines.push(`only after ${usd(u.min_volume_asof, { digits: 0 })} has traded (as of each bar)`);
-  if (u?.min_time_to_resolution_minutes != null) lines.push(`at least ${u.min_time_to_resolution_minutes} min before the scheduled end`);
-  const entry = dsl.entry;
-  if (entry.random) lines.push(`enters at random with probability ${entry.random.probability_per_bar} per eligible bar`);
-  const conds = entry.all ?? entry.any ?? [];
-  for (const c of conds) {
-    const params = c.params && Object.keys(c.params).length ? `(${Object.entries(c.params).map(([k, v]) => `${k.replace("_minutes", "")}=${v}m`).join(", ")})` : "";
-    lines.push(`${entry.any ? "or" : "when"} ${c.feature}${params} ${c.op} ${c.value}`);
-  }
-  const s = dsl.sizing;
-  lines.push(`sizes ${s.mode === "PCT_OF_EQUITY" ? `${pct(s.value, { digits: 0 })} of equity` : s.mode === "PCT_OF_INITIAL" ? `${pct(s.value, { digits: 0 })} of starting capital` : s.mode === "FIXED_CASH" ? usd(s.value) : `${s.value} shares`}${s.max_notional_per_trade ? ` (max ${usd(s.max_notional_per_trade)})` : ""}`);
-  const exits = dsl.exit?.any ?? [];
-  lines.push(exits.length ? `exits on ${exits.map((e) => e.type === "RULE" ? `rule(${e.condition.feature})` : `${e.type.toLowerCase()} ${e.value}`).join(", ")}` : "holds to resolution");
-  return lines;
-}
+type Source =
+  | { kind: "builtin"; key: string }
+  | { kind: "saved"; id: string; version: number }
+  | { kind: "fork"; runId: string };
 
-export function SimulateWizard() {
+type PresetChoice = PresetInfo["name"] | "PARENT";
+
+export function SimulateWizard({ fork, strategyId, version }: { fork?: string | null; strategyId?: string | null; version?: number | null }) {
   const router = useRouter();
+  const [saved, setSaved] = useState<StrategySummary[]>([]);
+  const [savedDetail, setSavedDetail] = useState<StrategyDetail | null>(null);
+  const [forkRun, setForkRun] = useState<RunDetail | null>(null);
+  const [source, setSource] = useState<Source>(
+    fork ? { kind: "fork", runId: fork } : strategyId ? { kind: "saved", id: strategyId, version: version ?? 0 } : { kind: "builtin", key: "underdog_probability_reversion" },
+  );
+  const [tab, setTab] = useState<"examples" | "saved">(strategyId ? "saved" : "examples");
   const [builtins, setBuiltins] = useState<BuiltinStrategy[] | null>(null);
   const [collections, setCollections] = useState<CollectionInfo[] | null>(null);
   const [presets, setPresets] = useState<PresetInfo[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [strategyKey, setStrategyKey] = useState("underdog_probability_reversion");
   const [collection, setCollection] = useState<string | null>(null);
-  const [preset, setPreset] = useState<PresetInfo["name"]>("REALISTIC");
+  const [preset, setPreset] = useState<PresetChoice>("REALISTIC");
   const [capital, setCapital] = useState("100");
   const [barInterval, setBarInterval] = useState(1);
   const [lag, setLag] = useState(1);
@@ -81,9 +79,49 @@ export function SimulateWizard() {
     }).catch((e) => setLoadError(String(e)));
   }, []);
 
-  const strategy = builtins?.find((b) => b.key === strategyKey) ?? null;
+  useEffect(() => {
+    apiGet<StrategySummary[]>("/strategies").then(setSaved).catch(() => setSaved([]));
+  }, []);
+
+  // Fork: prefill everything from the parent run's configuration.
+  useEffect(() => {
+    if (!fork) return;
+    apiGet<RunDetail>(`/backtests/${fork}`).then((run) => {
+      setForkRun(run);
+      const c = run.config;
+      setCollection(c.dataset?.collection ?? null);
+      setCapital(String(c.starting_capital));
+      setBarInterval(c.bar_interval_minutes ?? 1);
+      setLag(c.decision_lag_bars ?? 1);
+      setSeed(String(c.seed ?? 0));
+      setPreset(run.preset && run.preset !== "CUSTOM" ? (run.preset as PresetInfo["name"]) : "PARENT");
+    }).catch((e) => setLoadError(String(e)));
+  }, [fork]);
+
+  useEffect(() => {
+    if (source.kind !== "saved") return;
+    apiGet<StrategyDetail>(`/strategies/${source.id}`).then(setSavedDetail).catch((e) => setLoadError(String(e)));
+  }, [source]);
+
+  const strategy: { name: string; description: string | null | undefined; dsl: StrategyDSL; label: string } | null = useMemo(() => {
+    if (source.kind === "builtin") {
+      const b = builtins?.find((x) => x.key === source.key);
+      return b ? { name: b.name, description: b.description, dsl: b.dsl, label: "example" } : null;
+    }
+    if (source.kind === "fork") {
+      return forkRun ? { name: forkRun.config.strategy.name, description: forkRun.config.strategy.description, dsl: forkRun.config.strategy as StrategyDSL, label: `from ${forkRun.id}` } : null;
+    }
+    const v = savedDetail?.versions.find((x) => x.version === source.version) ?? savedDetail?.versions[0];
+    return v ? { name: v.dsl.name, description: v.dsl.description, dsl: v.dsl, label: `saved v${v.version}` } : null;
+  }, [source, builtins, forkRun, savedDetail]);
+
   const selectedCollection = collections?.find((c) => c.name === collection) ?? null;
-  const selectedPreset = presets?.find((p) => p.name === preset) ?? null;
+  const selectedPreset =
+    preset === "PARENT" && forkRun
+      ? { name: "PARENT", label: "Parent's settings", execution: forkRun.config.execution, fees: forkRun.config.fees }
+      : presets?.find((p) => p.name === preset) ?? null;
+  const editHref =
+    source.kind === "saved" ? `/strategies/${source.id}/edit` : source.kind === "fork" ? `/strategies/new?fork=${source.runId}` : `/strategies/new?from=${source.key}`;
 
   const survivorship = useMemo(() => {
     const sel = selectedCollection?.definition?.selection_uses_final_volume as
@@ -105,18 +143,19 @@ export function SimulateWizard() {
       seed: Number(seed) || 0,
       bar_interval_minutes: barInterval as BacktestRequest["bar_interval_minutes"],
       decision_lag_bars: lag,
-      execution: selectedPreset.execution,
-      fees: selectedPreset.fees as BacktestRequest["fees"],
+      execution: selectedPreset.execution as BacktestRequest["execution"],
+      fees: (selectedPreset.fees ?? { mode: "HISTORICAL" }) as BacktestRequest["fees"],
     };
+    const parent = source.kind === "fork" ? `?parent=${encodeURIComponent(source.runId)}` : "";
     try {
       if (allPresets) {
         // PRD §11.6: the default view is Realistic, with the other two alongside
-        const group = await apiPost<CreateGroupResponse>("/backtests/presets", request);
+        const group = await apiPost<CreateGroupResponse>(`/backtests/presets${parent}`, request);
         const realistic = group.runs.find((r) => r.preset === "REALISTIC") ?? group.runs[0]!;
         router.push(`/runs/${realistic.run_id}`);
         return;
       }
-      const created = await apiPost<CreateResponse>("/backtests", request);
+      const created = await apiPost<CreateResponse>(`/backtests${parent}`, request);
       router.push(`/runs/${created.run_id}`);
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : String(e));
@@ -134,25 +173,66 @@ export function SimulateWizard() {
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="space-y-4">
           <Step n={1} title="Strategy">
-            <div className="grid gap-2 md:grid-cols-2">
-              {builtins.map((b) => (
-                <label key={b.key} className={`cursor-pointer border px-3 py-2 ${strategyKey === b.key ? "border-accent bg-raised" : "border-line hover:bg-raised"}`}>
-                  <input type="radio" name="strategy" className="sr-only" checked={strategyKey === b.key} onChange={() => setStrategyKey(b.key)} />
-                  <div className="text-sm text-ink">{b.name}</div>
-                  <div className="mt-1 line-clamp-2 text-xs text-ink-muted">{b.description}</div>
-                </label>
+            {forkRun ? (
+              <p className="mb-3 border-l-2 border-accent bg-raised px-3 py-2 text-xs text-ink-muted">
+                Forking <Link href={`/runs/${forkRun.id}`} className="num text-accent hover:underline">{forkRun.id}</Link>: every setting starts from that run. Change what you want to test; the new run records its parent so the two can be compared.
+              </p>
+            ) : null}
+            <div className="mb-2 flex gap-2 text-xs">
+              {(["examples", "saved"] as const).map((t) => (
+                <button key={t} type="button" onClick={() => setTab(t)} aria-pressed={tab === t}
+                        className={`border px-2 py-1 ${tab === t ? "border-accent text-ink" : "border-line text-ink-muted hover:text-ink"}`}>
+                  {t === "examples" ? "Examples" : `Saved (${saved.length})`}
+                </button>
               ))}
+              <Link href="/strategies/new" className="ml-auto self-center text-ink-muted hover:text-ink">New strategy →</Link>
             </div>
+            {tab === "examples" ? (
+              <div className="grid gap-2 md:grid-cols-2">
+                {builtins.map((b) => (
+                  <label key={b.key} className={`cursor-pointer border px-3 py-2 ${source.kind === "builtin" && source.key === b.key ? "border-accent bg-raised" : "border-line hover:bg-raised"}`}>
+                    <input type="radio" name="strategy" className="sr-only" checked={source.kind === "builtin" && source.key === b.key} onChange={() => setSource({ kind: "builtin", key: b.key })} />
+                    <div className="text-sm text-ink">{b.name}</div>
+                    <div className="mt-1 line-clamp-2 text-xs text-ink-muted">{b.description}</div>
+                  </label>
+                ))}
+              </div>
+            ) : saved.length === 0 ? (
+              <p className="text-xs text-ink-muted">No saved strategies yet. <Link href="/strategies/new" className="text-accent hover:underline">Build one</Link> or customise an example.</p>
+            ) : (
+              <div className="grid gap-2 md:grid-cols-2">
+                {saved.map((st) => (
+                  <label key={st.id} className={`cursor-pointer border px-3 py-2 ${source.kind === "saved" && source.id === st.id ? "border-accent bg-raised" : "border-line hover:bg-raised"}`}>
+                    <input type="radio" name="strategy" className="sr-only" checked={source.kind === "saved" && source.id === st.id} onChange={() => setSource({ kind: "saved", id: st.id, version: st.latest_version })} />
+                    <div className="flex items-baseline justify-between gap-2 text-sm text-ink">{st.name}<span className="num text-[11px] text-ink-faint">v{st.latest_version}</span></div>
+                    <div className="mt-1 line-clamp-2 text-xs text-ink-muted">{st.description ?? `${st.runs} runs`}</div>
+                  </label>
+                ))}
+              </div>
+            )}
+            {source.kind === "saved" && savedDetail && savedDetail.versions.length > 1 ? (
+              <label className="mt-2 flex items-center gap-2 text-xs text-ink-muted">
+                Version
+                <select value={source.version || savedDetail.versions[0]!.version} onChange={(e) => setSource({ ...source, version: Number(e.target.value) })} className="border border-line bg-ground px-2 py-0.5">
+                  {savedDetail.versions.map((v) => <option key={v.version} value={v.version}>v{v.version}{v.note ? ` — ${v.note}` : ""}</option>)}
+                </select>
+              </label>
+            ) : null}
             {strategy ? (
               <div className="mt-3">
-                <ul className="space-y-0.5 text-xs text-ink-muted">{describeDsl(strategy.dsl).map((l) => <li key={l}>{l}</li>)}</ul>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-sm text-ink">{strategy.name}</span>
+                  <Badge>{strategy.label}</Badge>
+                  <Link href={editHref} className="ml-auto text-xs text-accent hover:underline">Edit in builder →</Link>
+                </div>
+                <ul className="mt-1 space-y-0.5 text-xs text-ink-muted">{describeDsl(strategy.dsl).map((l) => <li key={l}>{l}</li>)}</ul>
                 <details className="mt-2 text-xs">
                   <summary className="cursor-pointer text-ink-faint">Strategy DSL</summary>
                   <pre className="mt-1 max-h-72 overflow-auto bg-raised p-2 font-mono text-[11px] text-ink-muted">{JSON.stringify(strategy.dsl, null, 2)}</pre>
                 </details>
-                <p className="mt-2 text-[11px] text-ink-faint">Example strategies are not trading recommendations. Editing strategies arrives with the builder (M6).</p>
+                <p className="mt-2 text-[11px] text-ink-faint">Example strategies are not trading recommendations.</p>
               </div>
-            ) : null}
+            ) : <Loading label="Loading strategy…" />}
           </Step>
 
           <Step n={2} title="Markets">
@@ -176,6 +256,13 @@ export function SimulateWizard() {
 
           <Step n={3} title="Execution assumptions">
             <div className="grid gap-2 md:grid-cols-3">
+              {forkRun && forkRun.preset === "CUSTOM" ? (
+                <label className={`cursor-pointer border px-3 py-2 ${preset === "PARENT" ? "border-accent bg-raised" : "border-line hover:bg-raised"}`}>
+                  <input type="radio" name="preset" className="sr-only" checked={preset === "PARENT"} onChange={() => setPreset("PARENT")} />
+                  <div className="text-sm text-ink">Parent&apos;s settings</div>
+                  <div className="mt-1 text-xs text-ink-muted">The custom execution and fee settings of {forkRun.id}.</div>
+                </label>
+              ) : null}
               {presets.map((p) => (
                 <label key={p.name} className={`cursor-pointer border px-3 py-2 ${preset === p.name ? "border-accent bg-raised" : "border-line hover:bg-raised"}`}>
                   <input type="radio" name="preset" className="sr-only" checked={preset === p.name} onChange={() => setPreset(p.name)} />
@@ -223,9 +310,10 @@ export function SimulateWizard() {
           <h2 className="text-xs uppercase tracking-wider text-ink-muted">Review</h2>
           <dl className="mt-2 space-y-1 text-xs">
             <Review label="Strategy" value={strategy?.name ?? "—"} />
+            {forkRun ? <Review label="Parent" value={forkRun.id} /> : null}
             <Review label="Markets" value={collection ?? "—"} />
             <Review label="Execution" value={selectedPreset?.label ?? "—"} />
-            <Review label="Fees" value={selectedPreset?.fees.mode ?? "—"} />
+            <Review label="Fees" value={selectedPreset?.fees?.mode ?? "—"} />
             <Review label="Capital" value={usd(capital)} />
             <Review label="Bars / lag" value={`${barInterval}m / ${lag}`} />
           </dl>

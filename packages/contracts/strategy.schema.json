@@ -286,10 +286,11 @@
       "type": "object"
     },
     "Side": {
-      "description": "§3.3 — there is no shorting; short YES is expressed as BUY_NO.",
+      "description": "§3.3 — there is no shorting; short YES is expressed as BUY_NO. EITHER makes both tokens of\neach market candidates, so the entry rules choose the side (a price ≥ 0.9 rule buys the\nfavourite, whichever outcome that is); a market never holds both sides at once.",
       "enum": [
         "BUY_YES",
-        "BUY_NO"
+        "BUY_NO",
+        "EITHER"
       ],
       "title": "Side",
       "type": "string"
@@ -310,8 +311,25 @@
           "default": null,
           "title": "Max Notional Per Trade"
         },
+        "min_order_policy": {
+          "default": "SKIP",
+          "description": "When the sized order is below the market's minimum order size: SKIP rejects it (REJECTED_MIN_SIZE); ROUND_UP places the minimum instead, if cash, exposure headroom, max_notional_per_trade and the liquidity cap all still allow it and it is at most round_up_max_multiple times the requested notional.",
+          "enum": [
+            "SKIP",
+            "ROUND_UP"
+          ],
+          "title": "Min Order Policy",
+          "type": "string"
+        },
         "mode": {
           "$ref": "#/$defs/SizingMode"
+        },
+        "round_up_max_multiple": {
+          "default": 2.0,
+          "maximum": 20.0,
+          "minimum": 1.0,
+          "title": "Round Up Max Multiple",
+          "type": "number"
         },
         "value": {
           "exclusiveMinimum": 0,

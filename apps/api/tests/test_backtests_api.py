@@ -206,6 +206,74 @@ def test_run_all_three_presets_and_honesty(client: TestClient) -> None:
     assert listed[runs[2]["run_id"]]["preset"] == "CONSERVATIVE"
 
 
+QUICK = {"bootstrap_iterations": 200, "permutations": 10, "random_baselines": 5}
+
+
+def test_strategy_versions_and_diff(client: TestClient) -> None:
+    assert len(client.get("/api/strategies/features").json()) == 13
+    assert client.get("/api/strategies/builtins").status_code == 200  # not shadowed by /{id}
+    saved = client.post("/api/strategies", json={"dsl": REQUEST["strategy"], "note": "first"})
+    assert saved.status_code == 201, saved.text
+    body = saved.json()
+    sid = body["strategy_id"]
+    assert (
+        body["created"] and body["version"]["version"] == 1 and body["version"]["note"] == "first"
+    )
+
+    changed = {
+        **REQUEST["strategy"],
+        "entry": {"all": [{"feature": "price", "op": "lte", "value": 0.45}]},
+    }
+    v2 = client.post(
+        f"/api/strategies/{sid}/versions", json={"dsl": changed, "note": "tighter"}
+    ).json()
+    assert v2["created"] and v2["version"]["version"] == 2
+    again = client.post(f"/api/strategies/{sid}/versions", json={"dsl": changed}).json()
+    assert not again["created"] and again["version"]["version"] == 2
+
+    detail = client.get(f"/api/strategies/{sid}").json()
+    assert [v["version"] for v in detail["versions"]] == [2, 1]
+    listed = client.get("/api/strategies").json()
+    assert any(s["id"] == sid and s["latest_version"] == 2 for s in listed)
+    d = client.get(f"/api/strategies/{sid}/diff", params={"versions": [1, 2]}).json()
+    assert d["changes"] == [{"path": "entry.all[0].value", "values": [0.5, 0.45]}]
+
+
+def test_fork_rerun_compare_and_report(client: TestClient) -> None:
+    parent = client.post("/api/backtests", json={**REQUEST, "honesty": QUICK}).json()["run_id"]
+    forked = client.post(
+        f"/api/backtests/{parent}/rerun",
+        json={"overrides": {"starting_capital": "500", "strategy": {"sizing": {"value": 10}}}},
+    )
+    assert forked.status_code == 201, forked.text
+    child = forked.json()["runs"][0]["run_id"]
+    detail = client.get(f"/api/backtests/{child}").json()
+    assert detail["parent_run_id"] == parent and detail["status"] == "DONE"
+    assert detail["config"]["strategy"]["sizing"]["mode"] == "FIXED_CASH"  # merged, not replaced
+    bad = client.post(f"/api/backtests/{parent}/rerun", json={"overrides": {"seed": "x"}})
+    assert bad.status_code == 422
+
+    cmp = client.get("/api/compare", params={"run_ids": [parent, child]})
+    assert cmp.status_code == 200, cmp.text
+    comparison = cmp.json()
+    paths = {d["path"]: d["values"] for d in comparison["config_diff"]}
+    assert paths["starting_capital"] == ["100", "500"] and paths["strategy.sizing.value"] == [
+        5.0,
+        10.0,
+    ]
+    assert "run.engine_version" not in paths  # same engine: not a difference
+    roi = next(m for m in comparison["metrics"] if m["key"] == "net_profit")
+    assert roi["deltas"][0] == 0 and len(roi["values"]) == 2
+    assert [e["run_id"] for e in comparison["equity"]] == [parent, child]
+    assert client.post("/api/compare", json={"run_ids": [parent, child]}).status_code == 200
+
+    report = client.get(f"/api/backtests/{child}/report.md")
+    assert report.status_code == 200 and report.text.count("SIMULATED RESULTS") == 2
+    assert "## Is this better than chance?" in report.text and child in report.text
+    both = client.get("/api/compare/report.md", params={"run_ids": [parent, child]}).text
+    assert "`starting_capital`" in both and "Deltas are against the first run." in both
+
+
 def test_errors(client: TestClient) -> None:
     assert client.get("/api/backtests/BT-00000000-99999").status_code == 404
     missing = {**REQUEST, "dataset": {"collection": "nope"}}

@@ -248,6 +248,135 @@
         "title": "CollectionInfo",
         "type": "object"
       },
+      "CompareRequest": {
+        "properties": {
+          "run_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 6,
+            "minItems": 2,
+            "title": "Run Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run_ids"
+        ],
+        "title": "CompareRequest",
+        "type": "object"
+      },
+      "ComparedMetric": {
+        "properties": {
+          "better": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "higher | lower | None",
+            "title": "Better"
+          },
+          "deltas": {
+            "description": "Value minus the first run's, computed server-side",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Deltas",
+            "type": "array"
+          },
+          "format": {
+            "description": "usd | pct | count | ratio | percentile | text",
+            "title": "Format",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "format",
+          "better",
+          "values",
+          "deltas"
+        ],
+        "title": "ComparedMetric",
+        "type": "object"
+      },
+      "Comparison": {
+        "properties": {
+          "config_diff": {
+            "items": {
+              "$ref": "#/components/schemas/DiffEntry"
+            },
+            "title": "Config Diff",
+            "type": "array"
+          },
+          "equity": {
+            "items": {
+              "$ref": "#/components/schemas/EquityLine"
+            },
+            "title": "Equity",
+            "type": "array"
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/ComparedMetric"
+            },
+            "title": "Metrics",
+            "type": "array"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/RunDetail"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs",
+          "config_diff",
+          "metrics",
+          "equity"
+        ],
+        "title": "Comparison",
+        "type": "object"
+      },
       "Condition": {
         "additionalProperties": false,
         "properties": {
@@ -561,6 +690,27 @@
         "title": "DependencyStatus",
         "type": "object"
       },
+      "DiffEntry": {
+        "properties": {
+          "path": {
+            "description": "Dotted path into the document, e.g. strategy.exit.any[1].value",
+            "title": "Path",
+            "type": "string"
+          },
+          "values": {
+            "description": "One value per compared item; null where absent",
+            "items": {},
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "path",
+          "values"
+        ],
+        "title": "DiffEntry",
+        "type": "object"
+      },
       "Entry": {
         "additionalProperties": false,
         "properties": {
@@ -604,6 +754,35 @@
           }
         },
         "title": "Entry",
+        "type": "object"
+      },
+      "EquityLine": {
+        "properties": {
+          "equity": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Equity",
+            "type": "array"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "ts": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Ts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run_id",
+          "ts",
+          "equity"
+        ],
+        "title": "EquityLine",
         "type": "object"
       },
       "EquityPoint": {
@@ -801,6 +980,37 @@
           }
         },
         "title": "Exit",
+        "type": "object"
+      },
+      "FeatureInfo": {
+        "properties": {
+          "definition": {
+            "title": "Definition",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "null_when": {
+            "title": "Null When",
+            "type": "string"
+          },
+          "params": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Params",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "params",
+          "definition",
+          "null_when"
+        ],
+        "title": "FeatureInfo",
         "type": "object"
       },
       "FeeConfig-Input": {
@@ -1763,6 +1973,56 @@
         "title": "ReplayWindow",
         "type": "object"
       },
+      "RerunRequest": {
+        "properties": {
+          "all_presets": {
+            "default": false,
+            "title": "All Presets",
+            "type": "boolean"
+          },
+          "overrides": {
+            "additionalProperties": true,
+            "description": "Merged into the parent run's BacktestRequest (objects merge, other values replace)",
+            "title": "Overrides",
+            "type": "object"
+          }
+        },
+        "title": "RerunRequest",
+        "type": "object"
+      },
+      "RerunResponse": {
+        "properties": {
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          },
+          "parent_run_id": {
+            "title": "Parent Run Id",
+            "type": "string"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/CreateBacktestResponse"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "parent_run_id",
+          "group_id",
+          "runs"
+        ],
+        "title": "RerunResponse",
+        "type": "object"
+      },
       "RuleExit": {
         "additionalProperties": false,
         "properties": {
@@ -1953,6 +2213,18 @@
               }
             ],
             "title": "Net Profit"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The run this one was forked from",
+            "title": "Parent Run Id"
           },
           "permutation_percentile": {
             "anyOf": [
@@ -2248,6 +2520,18 @@
             ],
             "title": "Net Profit"
           },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The run this one was forked from",
+            "title": "Parent Run Id"
+          },
           "permutation_percentile": {
             "anyOf": [
               {
@@ -2372,11 +2656,58 @@
         "title": "RunSummary",
         "type": "object"
       },
+      "SaveStrategyRequest": {
+        "properties": {
+          "dsl": {
+            "$ref": "#/components/schemas/StrategyDSL"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "dsl"
+        ],
+        "title": "SaveStrategyRequest",
+        "type": "object"
+      },
+      "SaveVersionResponse": {
+        "properties": {
+          "created": {
+            "description": "False when an identical version already existed",
+            "title": "Created",
+            "type": "boolean"
+          },
+          "strategy_id": {
+            "title": "Strategy Id",
+            "type": "string"
+          },
+          "version": {
+            "$ref": "#/components/schemas/StrategyVersionInfo"
+          }
+        },
+        "required": [
+          "strategy_id",
+          "version",
+          "created"
+        ],
+        "title": "SaveVersionResponse",
+        "type": "object"
+      },
       "Side": {
-        "description": "§3.3 — there is no shorting; short YES is expressed as BUY_NO.",
+        "description": "§3.3 — there is no shorting; short YES is expressed as BUY_NO. EITHER makes both tokens of\neach market candidates, so the entry rules choose the side (a price ≥ 0.9 rule buys the\nfavourite, whichever outcome that is); a market never holds both sides at once.",
         "enum": [
           "BUY_YES",
-          "BUY_NO"
+          "BUY_NO",
+          "EITHER"
         ],
         "title": "Side",
         "type": "string"
@@ -2396,8 +2727,25 @@
             ],
             "title": "Max Notional Per Trade"
           },
+          "min_order_policy": {
+            "default": "SKIP",
+            "description": "When the sized order is below the market's minimum order size: SKIP rejects it (REJECTED_MIN_SIZE); ROUND_UP places the minimum instead, if cash, exposure headroom, max_notional_per_trade and the liquidity cap all still allow it and it is at most round_up_max_multiple times the requested notional.",
+            "enum": [
+              "SKIP",
+              "ROUND_UP"
+            ],
+            "title": "Min Order Policy",
+            "type": "string"
+          },
           "mode": {
             "$ref": "#/components/schemas/SizingMode"
+          },
+          "round_up_max_multiple": {
+            "default": 2.0,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Round Up Max Multiple",
+            "type": "number"
           },
           "value": {
             "exclusiveMinimum": 0.0,
@@ -2492,6 +2840,186 @@
           "sizing"
         ],
         "title": "StrategyDSL",
+        "type": "object"
+      },
+      "StrategyDetail": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "versions": {
+            "description": "Newest first",
+            "items": {
+              "$ref": "#/components/schemas/StrategyVersionInfo"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "versions"
+        ],
+        "title": "StrategyDetail",
+        "type": "object"
+      },
+      "StrategyDiff": {
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/DiffEntry"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "strategy_id": {
+            "title": "Strategy Id",
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "strategy_id",
+          "versions",
+          "changes"
+        ],
+        "title": "StrategyDiff",
+        "type": "object"
+      },
+      "StrategySummary": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "latest_version": {
+            "title": "Latest Version",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "runs": {
+            "title": "Runs",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "versions": {
+            "title": "Versions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "created_at",
+          "updated_at",
+          "latest_version",
+          "versions",
+          "runs"
+        ],
+        "title": "StrategySummary",
+        "type": "object"
+      },
+      "StrategyVersionInfo": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "dsl": {
+            "$ref": "#/components/schemas/StrategyDSL"
+          },
+          "dsl_hash": {
+            "title": "Dsl Hash",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "latest_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "runs": {
+            "title": "Runs",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "dsl_hash",
+          "created_at",
+          "note",
+          "dsl",
+          "runs",
+          "latest_run"
+        ],
+        "title": "StrategyVersionInfo",
         "type": "object"
       },
       "TakeProfit": {
@@ -3275,6 +3803,26 @@
       },
       "post": {
         "operationId": "create_backtest_api_backtests_post",
+        "parameters": [
+          {
+            "description": "run this configuration was forked from",
+            "in": "query",
+            "name": "parent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "run this configuration was forked from",
+              "title": "Parent"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3317,6 +3865,26 @@
       "post": {
         "description": "PRD §11.6 \"Run all three\": the request under each scenario preset, as one group. The\nrequest's own execution and fee settings are replaced.",
         "operationId": "create_preset_backtests_api_backtests_presets_post",
+        "parameters": [
+          {
+            "description": "run this configuration was forked from",
+            "in": "query",
+            "name": "parent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "run this configuration was forked from",
+              "title": "Parent"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3799,6 +4367,101 @@
         ]
       }
     },
+    "/api/backtests/{run_id}/report.md": {
+      "get": {
+        "operationId": "backtest_report_api_backtests__run_id__report_md_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Backtest Report",
+        "tags": [
+          "compare"
+        ]
+      }
+    },
+    "/api/backtests/{run_id}/rerun": {
+      "post": {
+        "description": "A new run from a previous run's configuration with overrides (PRD §14). Nothing is mutated:\nthe parent stays as it was and the new run records where it came from.",
+        "operationId": "rerun_api_backtests__run_id__rerun_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RerunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rerun",
+        "tags": [
+          "backtests"
+        ]
+      }
+    },
     "/api/backtests/{run_id}/stream": {
       "get": {
         "description": "Server-sent events: `progress` while queued or running, then one `status` event.",
@@ -4070,6 +4733,140 @@
         ]
       }
     },
+    "/api/compare": {
+      "get": {
+        "description": "The same comparison, addressable by URL (`?run_ids=A&run_ids=B`).",
+        "operationId": "compare_get_api_compare_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "run_ids",
+            "required": true,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 6,
+              "minItems": 2,
+              "title": "Run Ids",
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comparison"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compare Get",
+        "tags": [
+          "compare"
+        ]
+      },
+      "post": {
+        "operationId": "compare_api_compare_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comparison"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compare",
+        "tags": [
+          "compare"
+        ]
+      }
+    },
+    "/api/compare/report.md": {
+      "get": {
+        "operationId": "compare_report_api_compare_report_md_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "run_ids",
+            "required": true,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 6,
+              "minItems": 2,
+              "title": "Run Ids",
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compare Report",
+        "tags": [
+          "compare"
+        ]
+      }
+    },
     "/api/dataset/versions": {
       "get": {
         "operationId": "dataset_versions_api_dataset_versions_get",
@@ -4172,6 +4969,71 @@
         ]
       }
     },
+    "/api/strategies": {
+      "get": {
+        "operationId": "list_strategies_api_strategies_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StrategySummary"
+                  },
+                  "title": "Response List Strategies Api Strategies Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Strategies",
+        "tags": [
+          "strategies"
+        ]
+      },
+      "post": {
+        "description": "Save a strategy document. The name identifies the strategy: saving under an existing name\nadds a version to it (or returns the identical version).",
+        "operationId": "create_strategy_api_strategies_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveStrategyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaveVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Strategy",
+        "tags": [
+          "strategies"
+        ]
+      }
+    },
     "/api/strategies/builtins": {
       "get": {
         "operationId": "builtins_api_strategies_builtins_get",
@@ -4194,6 +5056,32 @@
         "summary": "Builtins",
         "tags": [
           "catalog"
+        ]
+      }
+    },
+    "/api/strategies/features": {
+      "get": {
+        "description": "The feature registry the DSL can reference (PRD §8.2).",
+        "operationId": "features_api_strategies_features_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FeatureInfo"
+                  },
+                  "title": "Response Features Api Strategies Features Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Features",
+        "tags": [
+          "strategies"
         ]
       }
     },
@@ -4235,6 +5123,159 @@
         "summary": "Validate",
         "tags": [
           "catalog"
+        ]
+      }
+    },
+    "/api/strategies/{strategy_id}": {
+      "get": {
+        "operationId": "get_strategy_api_strategies__strategy_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "strategy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Strategy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Strategy",
+        "tags": [
+          "strategies"
+        ]
+      }
+    },
+    "/api/strategies/{strategy_id}/diff": {
+      "get": {
+        "operationId": "diff_versions_api_strategies__strategy_id__diff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "strategy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Strategy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "versions",
+            "required": true,
+            "schema": {
+              "items": {
+                "type": "integer"
+              },
+              "maxItems": 6,
+              "minItems": 2,
+              "title": "Versions",
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyDiff"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Diff Versions",
+        "tags": [
+          "strategies"
+        ]
+      }
+    },
+    "/api/strategies/{strategy_id}/versions": {
+      "post": {
+        "operationId": "create_version_api_strategies__strategy_id__versions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "strategy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Strategy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveStrategyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaveVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Version",
+        "tags": [
+          "strategies"
         ]
       }
     }

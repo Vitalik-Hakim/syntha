@@ -166,6 +166,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/backtests/{run_id}/report.md": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Backtest Report */
+        get: operations["backtest_report_api_backtests__run_id__report_md_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/backtests/{run_id}/rerun": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rerun
+         * @description A new run from a previous run's configuration with overrides (PRD §14). Nothing is mutated:
+         *     the parent stays as it was and the new run records where it came from.
+         */
+        post: operations["rerun_api_backtests__run_id__rerun_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/backtests/{run_id}/stream": {
         parameters: {
             query?: never;
@@ -257,6 +295,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Compare Get
+         * @description The same comparison, addressable by URL (`?run_ids=A&run_ids=B`).
+         */
+        get: operations["compare_get_api_compare_get"];
+        put?: never;
+        /** Compare */
+        post: operations["compare_api_compare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/compare/report.md": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Compare Report */
+        get: operations["compare_report_api_compare_report_md_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/dataset/versions": {
         parameters: {
             query?: never;
@@ -325,6 +401,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/strategies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Strategies */
+        get: operations["list_strategies_api_strategies_get"];
+        put?: never;
+        /**
+         * Create Strategy
+         * @description Save a strategy document. The name identifies the strategy: saving under an existing name
+         *     adds a version to it (or returns the identical version).
+         */
+        post: operations["create_strategy_api_strategies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/strategies/builtins": {
         parameters: {
             query?: never;
@@ -334,6 +432,26 @@ export interface paths {
         };
         /** Builtins */
         get: operations["builtins_api_strategies_builtins_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/strategies/features": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Features
+         * @description The feature registry the DSL can reference (PRD §8.2).
+         */
+        get: operations["features_api_strategies_features_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -353,6 +471,57 @@ export interface paths {
         put?: never;
         /** Validate */
         post: operations["validate_api_strategies_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/strategies/{strategy_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Strategy */
+        get: operations["get_strategy_api_strategies__strategy_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/strategies/{strategy_id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Diff Versions */
+        get: operations["diff_versions_api_strategies__strategy_id__diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/strategies/{strategy_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Version */
+        post: operations["create_version_api_strategies__strategy_id__versions_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -497,6 +666,46 @@ export interface components {
             /** Survivorship Note */
             survivorship_note?: string | null;
         };
+        /** CompareRequest */
+        CompareRequest: {
+            /** Run Ids */
+            run_ids: string[];
+        };
+        /** ComparedMetric */
+        ComparedMetric: {
+            /**
+             * Better
+             * @description higher | lower | None
+             */
+            better: string | null;
+            /**
+             * Deltas
+             * @description Value minus the first run's, computed server-side
+             */
+            deltas: (number | null)[];
+            /**
+             * Format
+             * @description usd | pct | count | ratio | percentile | text
+             */
+            format: string;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Values */
+            values: (number | string | null)[];
+        };
+        /** Comparison */
+        Comparison: {
+            /** Config Diff */
+            config_diff: components["schemas"]["DiffEntry"][];
+            /** Equity */
+            equity: components["schemas"]["EquityLine"][];
+            /** Metrics */
+            metrics: components["schemas"]["ComparedMetric"][];
+            /** Runs */
+            runs: components["schemas"]["RunDetail"][];
+        };
         /** Condition */
         Condition: {
             /**
@@ -607,6 +816,19 @@ export interface components {
             /** Ok */
             ok: boolean;
         };
+        /** DiffEntry */
+        DiffEntry: {
+            /**
+             * Path
+             * @description Dotted path into the document, e.g. strategy.exit.any[1].value
+             */
+            path: string;
+            /**
+             * Values
+             * @description One value per compared item; null where absent
+             */
+            values: unknown[];
+        };
         /** Entry */
         Entry: {
             /** All */
@@ -614,6 +836,15 @@ export interface components {
             /** Any */
             any?: components["schemas"]["Condition"][] | null;
             random?: components["schemas"]["RandomEntry"] | null;
+        };
+        /** EquityLine */
+        EquityLine: {
+            /** Equity */
+            equity: number[];
+            /** Run Id */
+            run_id: string;
+            /** Ts */
+            ts: number[];
         };
         /** EquityPoint */
         EquityPoint: {
@@ -694,6 +925,17 @@ export interface components {
         Exit: {
             /** Any */
             any?: (components["schemas"]["TakeProfit"] | components["schemas"]["StopLoss"] | components["schemas"]["PriceAbove"] | components["schemas"]["PriceBelow"] | components["schemas"]["MaxHold"] | components["schemas"]["RuleExit"])[];
+        };
+        /** FeatureInfo */
+        FeatureInfo: {
+            /** Definition */
+            definition: string;
+            /** Name */
+            name: string;
+            /** Null When */
+            null_when: string;
+            /** Params */
+            params: string[];
         };
         /** FeeConfig */
         "FeeConfig-Input": {
@@ -1098,6 +1340,30 @@ export interface components {
              */
             start: string;
         };
+        /** RerunRequest */
+        RerunRequest: {
+            /**
+             * All Presets
+             * @default false
+             */
+            all_presets?: boolean;
+            /**
+             * Overrides
+             * @description Merged into the parent run's BacktestRequest (objects merge, other values replace)
+             */
+            overrides?: {
+                [key: string]: unknown;
+            };
+        };
+        /** RerunResponse */
+        RerunResponse: {
+            /** Group Id */
+            group_id: string | null;
+            /** Parent Run Id */
+            parent_run_id: string;
+            /** Runs */
+            runs: components["schemas"]["CreateBacktestResponse"][];
+        };
         /** RuleExit */
         RuleExit: {
             condition: components["schemas"]["Condition"];
@@ -1163,6 +1429,11 @@ export interface components {
             n_trades: number | null;
             /** Net Profit */
             net_profit: number | null;
+            /**
+             * Parent Run Id
+             * @description The run this one was forked from
+             */
+            parent_run_id?: string | null;
             /**
              * Permutation Percentile
              * @description Percent of permuted variants this run beat (PRD §15.3)
@@ -1239,6 +1510,11 @@ export interface components {
             /** Net Profit */
             net_profit: number | null;
             /**
+             * Parent Run Id
+             * @description The run this one was forked from
+             */
+            parent_run_id?: string | null;
+            /**
              * Permutation Percentile
              * @description Percent of permuted variants this run beat (PRD §15.3)
              */
@@ -1267,17 +1543,48 @@ export interface components {
             /** Warnings */
             warnings?: string[];
         };
+        /** SaveStrategyRequest */
+        SaveStrategyRequest: {
+            dsl: components["schemas"]["StrategyDSL"];
+            /** Note */
+            note?: string | null;
+        };
+        /** SaveVersionResponse */
+        SaveVersionResponse: {
+            /**
+             * Created
+             * @description False when an identical version already existed
+             */
+            created: boolean;
+            /** Strategy Id */
+            strategy_id: string;
+            version: components["schemas"]["StrategyVersionInfo"];
+        };
         /**
          * Side
-         * @description §3.3 — there is no shorting; short YES is expressed as BUY_NO.
+         * @description §3.3 — there is no shorting; short YES is expressed as BUY_NO. EITHER makes both tokens of
+         *     each market candidates, so the entry rules choose the side (a price ≥ 0.9 rule buys the
+         *     favourite, whichever outcome that is); a market never holds both sides at once.
          * @enum {string}
          */
-        Side: "BUY_YES" | "BUY_NO";
+        Side: "BUY_YES" | "BUY_NO" | "EITHER";
         /** Sizing */
         Sizing: {
             /** Max Notional Per Trade */
             max_notional_per_trade?: number | null;
+            /**
+             * Min Order Policy
+             * @description When the sized order is below the market's minimum order size: SKIP rejects it (REJECTED_MIN_SIZE); ROUND_UP places the minimum instead, if cash, exposure headroom, max_notional_per_trade and the liquidity cap all still allow it and it is at most round_up_max_multiple times the requested notional.
+             * @default SKIP
+             * @enum {string}
+             */
+            min_order_policy?: "SKIP" | "ROUND_UP";
             mode: components["schemas"]["SizingMode"];
+            /**
+             * Round Up Max Multiple
+             * @default 2
+             */
+            round_up_max_multiple?: number;
             /** Value */
             value: number;
         };
@@ -1314,6 +1621,77 @@ export interface components {
             name: string;
             sizing: components["schemas"]["Sizing"];
             universe?: components["schemas"]["Universe"];
+        };
+        /** StrategyDetail */
+        StrategyDetail: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Versions
+             * @description Newest first
+             */
+            versions: components["schemas"]["StrategyVersionInfo"][];
+        };
+        /** StrategyDiff */
+        StrategyDiff: {
+            /** Changes */
+            changes: components["schemas"]["DiffEntry"][];
+            /** Strategy Id */
+            strategy_id: string;
+            /** Versions */
+            versions: number[];
+        };
+        /** StrategySummary */
+        StrategySummary: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string | null;
+            /** Id */
+            id: string;
+            /** Latest Version */
+            latest_version: number;
+            /** Name */
+            name: string;
+            /** Runs */
+            runs: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Versions */
+            versions: number;
+        };
+        /** StrategyVersionInfo */
+        StrategyVersionInfo: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            dsl: components["schemas"]["StrategyDSL"];
+            /** Dsl Hash */
+            dsl_hash: string;
+            /** Id */
+            id: string;
+            latest_run: components["schemas"]["RunSummary"] | null;
+            /** Note */
+            note: string | null;
+            /** Runs */
+            runs: number;
+            /** Version */
+            version: number;
         };
         /** TakeProfit */
         TakeProfit: {
@@ -1563,7 +1941,10 @@ export interface operations {
     };
     create_backtest_api_backtests_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description run this configuration was forked from */
+                parent?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1596,7 +1977,10 @@ export interface operations {
     };
     create_preset_backtests_api_backtests_presets_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description run this configuration was forked from */
+                parent?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1858,6 +2242,72 @@ export interface operations {
             };
         };
     };
+    backtest_report_api_backtests__run_id__report_md_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rerun_api_backtests__run_id__rerun_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RerunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RerunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     stream_backtest_api_backtests__run_id__stream_get: {
         parameters: {
             query?: never;
@@ -2009,6 +2459,101 @@ export interface operations {
             };
         };
     };
+    compare_get_api_compare_get: {
+        parameters: {
+            query: {
+                run_ids: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Comparison"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_api_compare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompareRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Comparison"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_report_api_compare_report_md_get: {
+        parameters: {
+            query: {
+                run_ids: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     dataset_versions_api_dataset_versions_get: {
         parameters: {
             query?: never;
@@ -2098,6 +2643,59 @@ export interface operations {
             };
         };
     };
+    list_strategies_api_strategies_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategySummary"][];
+                };
+            };
+        };
+    };
+    create_strategy_api_strategies_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveStrategyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveVersionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     builtins_api_strategies_builtins_get: {
         parameters: {
             query?: never;
@@ -2114,6 +2712,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BuiltinStrategy"][];
+                };
+            };
+        };
+    };
+    features_api_strategies_features_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeatureInfo"][];
                 };
             };
         };
@@ -2138,6 +2756,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ValidationResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_strategy_api_strategies__strategy_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                strategy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    diff_versions_api_strategies__strategy_id__diff_get: {
+        parameters: {
+            query: {
+                versions: number[];
+            };
+            header?: never;
+            path: {
+                strategy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyDiff"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_version_api_strategies__strategy_id__versions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                strategy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveStrategyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveVersionResponse"];
                 };
             };
             /** @description Validation Error */

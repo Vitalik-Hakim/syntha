@@ -22,12 +22,13 @@ from psycopg.types.json import Jsonb
 from syntha_contracts.backtest import BacktestRequest
 from syntha_contracts.builtins import builtin_strategy
 from syntha_contracts.enums import RunStatus
+from syntha_contracts.strategy import StrategyDSL
 from syntha_engine import ENGINE_VERSION
 from syntha_engine.data import Dataset, SettlementTable
 from syntha_engine.honesty import compute_honesty
 from syntha_engine.runner import BacktestResult, prepare, simulate
 from syntha_engine.strategy.compiler import compile_strategy
-from syntha_worker.loader import load_dataset
+from syntha_worker.loader import LoadedDataset, load_dataset
 
 log = logging.getLogger(__name__)
 
@@ -62,9 +63,11 @@ def progress_key(run_id: str) -> str:
 # ------------------------------------------------------------------ create
 
 
-def _strategy_version(conn: psycopg.Connection[Any], request: BacktestRequest) -> uuid.UUID:
-    """Find or create the strategy version for this DSL (by name + dsl_hash)."""
-    dsl = request.strategy
+def strategy_version(
+    conn: psycopg.Connection[Any], dsl: StrategyDSL, note: str | None = None
+) -> uuid.UUID:
+    """Find or create the strategy version for this DSL (by name + dsl_hash). Versions number
+    1, 2, … per strategy name; an identical document reuses its version."""
     digest = dsl.dsl_hash()
     row = conn.execute(
         "SELECT v.id FROM strategy_versions v JOIN strategies s ON s.id = v.strategy_id "
@@ -94,15 +97,19 @@ def _strategy_version(conn: psycopg.Connection[Any], request: BacktestRequest) -
         )
     version_id = uuid.uuid4()
     conn.execute(
-        "INSERT INTO strategy_versions (id, strategy_id, version, dsl, dsl_hash, created_at) "
-        "VALUES (%s, %s, %s, %s, %s, now())",
-        (version_id, strategy_id, version, Jsonb(dsl.model_dump(mode="json")), digest),
+        "INSERT INTO strategy_versions (id, strategy_id, version, dsl, dsl_hash, created_at, note) "
+        "VALUES (%s, %s, %s, %s, %s, now(), %s)",
+        (version_id, strategy_id, version, Jsonb(dsl.model_dump(mode="json")), digest, note),
     )
     return version_id
 
 
 def create_run(
-    conn: psycopg.Connection[Any], request: BacktestRequest, group_id: uuid.UUID | None = None
+    conn: psycopg.Connection[Any],
+    request: BacktestRequest,
+    group_id: uuid.UUID | None = None,
+    parent_run_id: str | None = None,
+    note: str | None = None,
 ) -> str:
     """Validate and insert a QUEUED run. Returns its id (BT-YYYYMMDD-NNNNN). Runs of one "run all
     three presets" request share `group_id`."""
@@ -112,13 +119,14 @@ def create_run(
     ).fetchone()
     if dataset is None:
         raise NoDatasetVersion("no dataset version; run `make rebuild-normalized` first")
-    version_id = _strategy_version(conn, request)
+    version_id = strategy_version(conn, request.strategy, note)
     seq = int(_scalar(conn, "SELECT nextval('backtest_run_seq')"))
     run_id = f"BT-{datetime.now(UTC):%Y%m%d}-{seq:05d}"
     conn.execute(
         """INSERT INTO backtest_runs (id, strategy_version_id, dataset_version_id, config, config_hash,
-             engine_version, seed, status, data_quality, strategy_name, collection, group_id, preset)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '{}'::jsonb, %s, %s, %s, %s)""",
+             engine_version, seed, status, data_quality, strategy_name, collection, group_id, preset,
+             parent_run_id)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '{}'::jsonb, %s, %s, %s, %s, %s)""",
         (
             run_id,
             version_id,
@@ -132,6 +140,7 @@ def create_run(
             request.dataset.collection,
             group_id,
             request.preset_name(),
+            parent_run_id,
         ),
     )
     return run_id
@@ -268,9 +277,13 @@ def backtest_with_honesty(
 
 
 def execute_run(
-    run_id: str, db_url: str | None = None, on_progress: Callable[[str, float], None] | None = None
+    run_id: str,
+    db_url: str | None = None,
+    on_progress: Callable[[str, float], None] | None = None,
+    loaded: LoadedDataset | None = None,
 ) -> RunStatus:
-    """Run a QUEUED backtest to completion. Failures are recorded on the run, never swallowed."""
+    """Run a QUEUED backtest to completion. Failures are recorded on the run, never swallowed.
+    `loaded` lets a batch of runs over the same markets share one load (research scripts)."""
     url = db_url or database_url()
     report = on_progress or (lambda phase, fraction: None)
     with psycopg.connect(url) as conn:
@@ -290,7 +303,8 @@ def execute_run(
     try:
         request = BacktestRequest.model_validate(row[0])
         report("load", 0.0)
-        loaded = load_dataset(url, request)
+        if loaded is None:
+            loaded = load_dataset(url, request)
         result, honesty = backtest_with_honesty(
             request, loaded.dataset, loaded.settlement, progress=report
         )

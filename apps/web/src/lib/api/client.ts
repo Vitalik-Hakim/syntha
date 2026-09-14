@@ -25,6 +25,16 @@ export type ReplayMarker = S["ReplayMarker"];
 export type NearMissPage = S["NearMissPage"];
 export type NearMissRow = S["NearMissRow"];
 export type NearMissDetail = S["NearMissDetail"];
+export type FeatureInfo = S["FeatureInfo"];
+export type StrategySummary = S["StrategySummary"];
+export type StrategyDetail = S["StrategyDetail"];
+export type StrategyVersionInfo = S["StrategyVersionInfo"];
+export type SaveVersionResponse = S["SaveVersionResponse"];
+export type StrategyDiff = S["StrategyDiff"];
+export type Comparison = S["Comparison"];
+export type ComparedMetric = S["ComparedMetric"];
+export type RerunResponse = S["RerunResponse"];
+export type ValidateResult = S["ValidationResult"];
 
 export class ApiError extends Error {
   constructor(

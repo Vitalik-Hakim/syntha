@@ -1,0 +1,54 @@
+{
+  "dsl_version": 1,
+  "name": "Late Longshot to Resolution",
+  "description": "Research finding that failed its out-of-sample test — not a trading recommendation. Buys either outcome priced 0.10–0.20 within 24 hours of the scheduled end and holds to settlement, 2% of starting capital per trade. Record (Realistic, $1,000, docs/RESEARCH_PROTOCOL.md): Mar–Jul 2026 all positive (+8.0%, +3.5%, +19.5%, +41.8%, +7.0%), then the two pre-registered untouched months both negative (Feb −29.6%, Aug −4.0%). Four out-of-sample months pooled: +3.8%, 90% CI −9.9% to +19.0%. Five trades made nearly all of the gains. Kept as a worked example of a pattern that looked real for five months and was not.",
+  "universe": {
+    "side": "EITHER",
+    "min_volume_asof": 10000
+  },
+  "entry": {
+    "all": [
+      {
+        "feature": "price",
+        "params": {},
+        "op": "gte",
+        "value": 0.1
+      },
+      {
+        "feature": "price",
+        "params": {},
+        "op": "lte",
+        "value": 0.2
+      },
+      {
+        "feature": "time_to_resolution_minutes",
+        "params": {},
+        "op": "lte",
+        "value": 1440
+      },
+      {
+        "feature": "staleness_minutes",
+        "params": {},
+        "op": "lte",
+        "value": 10
+      }
+    ]
+  },
+  "sizing": {
+    "mode": "PCT_OF_INITIAL",
+    "value": 0.02,
+    "max_notional_per_trade": 40.0,
+    "min_order_policy": "ROUND_UP",
+    "round_up_max_multiple": 2.0
+  },
+  "exit": {
+    "any": []
+  },
+  "constraints": {
+    "max_open_positions": 40,
+    "max_total_exposure_pct": 0.8,
+    "max_positions_per_event": 1,
+    "cooldown_minutes_per_market": 0,
+    "allow_reentry_same_market": false
+  }
+}

@@ -78,14 +78,14 @@ def _split(df: pl.DataFrame, cols: list[str], names: list[str]) -> dict[str, dic
 def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
     sel = request.dataset
     universe = request.strategy.universe
-    outcome_index = 0 if universe.side == Side.BUY_YES else 1
+    outcome_indexes = {Side.BUY_YES: [0], Side.BUY_NO: [1], Side.EITHER: [0, 1]}[universe.side]
     params: dict[str, Any] = {
         "collection": sel.collection,
         "conditions": sel.condition_ids,
         "categories": [c.lower() for c in universe.categories] if universe.categories else None,
         "start": sel.start,
         "end": sel.end,
-        "outcome_index": outcome_index,
+        "outcome_indexes": outcome_indexes,
     }
     market_filter = """
         FROM markets m
@@ -142,8 +142,8 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
 
         outcomes = conn.execute(
             "SELECT o.clob_token_id, o.condition_id, o.outcome_index, o.outcome_name FROM outcomes o "
-            "WHERE o.condition_id = ANY(%(ids)s) AND o.outcome_index = %(idx)s ORDER BY 1",
-            {"ids": list(markets), "idx": outcome_index},
+            "WHERE o.condition_id = ANY(%(ids)s) AND o.outcome_index = ANY(%(idx)s) ORDER BY 1",
+            {"ids": list(markets), "idx": outcome_indexes},
         ).fetchall()
         token_ids = [o[0] for o in outcomes]
         window = {"tokens": token_ids, "start": sel.start, "end": sel.end}

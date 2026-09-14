@@ -78,6 +78,8 @@ uv run strategy-lab run examples/underdog-realistic.json       # against the dat
 uv run strategy-lab run examples/underdog-realistic.json --preset CONSERVATIVE
 make m2-acceptance                                             # golden fixtures, look-ahead attacks, determinism
 make bench-engine                                              # 1,000 markets × 90 days benchmark
+uv run python tools/research/calibration.py july-2026-liquid-400   # price vs outcome, discovery data only
+uv run python tools/research/run_candidates.py --collection july-2026-liquid-400 examples/research/*.json
 ```
 
 **From the browser:** open http://localhost:3100/simulate, pick a strategy, a collection, an
@@ -99,12 +101,39 @@ permuted variants"; under ~95% is not evidence of edge), random-entry baselines,
 on the same markets. "Run all three presets" runs Realistic, Optimistic and Conservative side by
 side. `strategy-lab run … --no-honesty` skips the tests for quick iterations.
 
-Two collections so far:
+**Iterate** (M6): build or customise strategies at `/strategies` (every save is an immutable version,
+with a diff between versions). Use **Fork** on any run to start a new one from its exact
+configuration. Compare 2–6 runs side by side at `/compare` (what differs in the configuration,
+server-computed deltas, equity overlay), and download a Markdown research report from a run or a
+comparison.
+
+**Minimum order size.** Orders below a market's minimum are rejected by default (PRD). Set
+"Below the market minimum → Round up" in the builder (`sizing.min_order_policy: "ROUND_UP"`) to
+place the minimum when cash, exposure and liquidity allow. Each run's "Why signals didn't fill"
+panel names the cause of every rejection and how many rounding up would have filled.
+
+**Strategy search.** docs/RESEARCH_PROTOCOL.md fixes the candidate grid, the selection rule and the
+multiple-comparison accounting before anything runs. `universe.side: "EITHER"` lets a rule pick
+the side (a "price ≥ 0.9" entry buys the favourite, whichever outcome it is).
+
+```sh
+uv run python tools/research/sweep.py --sweep discovery --collections march-2026-liquid-400 april-2026-liquid-400 may-2026-liquid-400 --extra examples/research/*.json
+uv run python tools/research/pooled.py --sweep discovery --select      # pooled table + finalists
+```
+
+Outcome (docs/DATA_NOTES.md, "M7 strategy search"): over seven months and 2,800 liquid markets,
+none of 44 configurations in seven families shows an edge that survives pre-registration,
+multiple-comparison accounting and untouched months. The one exploratory survivor, *Late
+Longshot to Resolution*, was positive for five months and then lost 29.6% in the first untouched
+month; it stays as a built-in example with that record, labelled as a failed test.
+
+Collections:
 
 | Collection | What it is | Use it for |
 | --- | --- | --- |
 | `july-2026-stratified-600` | Seeded, stratified, no outcome-dependent filter | Any strategy; most markets are thin |
 | `july-2026-liquid-sports-300` | Sports markets with final volume ≥ $7,500 | Strategies with `min_volume_asof` ≥ $10,000 only; lower filters are survivorship-biased (see DATA_NOTES) |
+| `march|april|may|june|july-2026-liquid-400` | 400 markets/month, all categories, final volume ≥ $7,500 | The research months: March–May discovery, June–July holdout (docs/RESEARCH_PROTOCOL.md) |
 
 ```sh
 uv run strategy-lab run examples/underdog-liquid-sports.json   # the M3 acceptance run, from the CLI

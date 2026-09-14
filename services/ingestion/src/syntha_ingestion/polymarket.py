@@ -15,8 +15,12 @@ from syntha_ingestion.config import (
     PRICE_WINDOW_SECONDS,
     RESOLUTION_BATCH,
 )
-from syntha_ingestion.http import ApiClient
+from syntha_ingestion.http import ApiClient, FetchError
 from syntha_ingestion.raw_store import RawRecord, RawStore
+
+KEYSET_PAGE_LIMIT = 100  # server maximum since 2026-05-14
+KEYSET_MIN_LIMIT = 90  # how far a poisoned-cursor back-off may shrink the page
+_UNKNOWN = object()  # "the previous page's cursor is not known", as distinct from None (page 0)
 
 GAMMA_MARKETS_KEYSET = "gamma_markets_keyset"
 GAMMA_MARKET = "gamma_market"
@@ -29,15 +33,31 @@ DATA_V2_RESOLUTIONS = "data_v2_resolutions"
 
 
 async def list_markets(
-    client: ApiClient, *, end_date_min: str, end_date_max: str, closed: bool
+    client: ApiClient,
+    *,
+    end_date_min: str,
+    end_date_max: str,
+    closed: bool,
+    start_cursor: str | None = None,
+    start_page: int = 0,
+    previous_cursor: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Every market whose scheduled end date falls in [min, max], via keyset pagination."""
-    cursor: str | None = None
-    page = 0
+    """Every market whose scheduled end date falls in [min, max], via keyset pagination.
+
+    `start_cursor`/`start_page` continue a listing whose earlier pages are already saved;
+    `previous_cursor` is the cursor that fetched the last saved page. Cloudflare rejects some
+    cursor values outright (a 403 HTML page for one specific cursor, every time; docs/DATA_NOTES.md
+    rate limits). On such a 403 the previous page is fetched again with a smaller page size, which
+    moves the page boundary and so produces a different cursor; callers de-duplicate markets by
+    conditionId, so the re-yielded page is harmless."""
+    cursor: str | None = start_cursor
+    prev: Any = previous_cursor if start_page > 0 else _UNKNOWN
+    page = start_page
+    limit = KEYSET_PAGE_LIMIT
     while True:
         params = {
             "closed": "true" if closed else "false",
-            "limit": 100,  # server maximum since 2026-05-14
+            "limit": limit,
             "end_date_min": end_date_min,
             "end_date_max": end_date_max,
             "after_cursor": cursor,
@@ -49,12 +69,20 @@ async def list_markets(
             "closed": closed,
             "page": page,
         }
-        _, body = await client.get(
-            GAMMA_MARKETS_KEYSET, f"{GAMMA_URL}/markets/keyset", params, unit
-        )
+        try:
+            _, body = await client.get(
+                GAMMA_MARKETS_KEYSET, f"{GAMMA_URL}/markets/keyset", params, unit
+            )
+        except FetchError as exc:
+            if exc.status != 403 or cursor is None or prev is _UNKNOWN or limit <= KEYSET_MIN_LIMIT:
+                raise
+            limit -= 1
+            cursor, prev = prev, _UNKNOWN  # re-fetch the previous page at the new size
+            page -= 1
+            continue
         for market in body.get("markets") or []:
             yield market
-        cursor = body.get("next_cursor")
+        prev, cursor = cursor, body.get("next_cursor")
         page += 1
         if not cursor or not body.get("markets"):
             return

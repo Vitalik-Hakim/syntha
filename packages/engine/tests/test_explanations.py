@@ -1,6 +1,7 @@
 """Explanations (PRD §13): rule traces that carry every check with its actual value, and near
 misses that say why the strategy did not trade at a bar."""
 
+import dataclasses
 from decimal import Decimal
 from typing import Any
 
@@ -246,3 +247,109 @@ def test_exit_reason_breakdown_sums_to_the_totals() -> None:
     ]
     assert sum(r["net_pnl"] for r in rows) == pytest.approx(0.5)
     assert rows[1]["median_holding_seconds"] is None
+
+
+# ------------------------------------------------------------------ minimum order size
+
+
+def _min_size_request(policy: str, **sizing: Any) -> BacktestRequest:
+    return _request(
+        {
+            "sizing": {"mode": "FIXED_CASH", "value": 4.8, "min_order_policy": policy, **sizing},
+            "entry": {"all": [{"feature": "price", "op": "gte", "value": 0.95}]},
+        }
+    )
+
+
+def _min_size_dataset(min_size: str = "5") -> tuple[Dataset, SettlementTable]:
+    ds, st = _dataset({"m": ("e", _token("m", [0.98] * 5))})
+    terms = ds.markets["m"]
+    market = dataclasses.replace(terms, min_order_size=Decimal(min_size))
+    return Dataset({"m": market}, ds.tokens), st
+
+
+def test_skip_rejects_below_minimum_and_says_rounding_up_would_fill() -> None:
+    ds, st = _min_size_dataset()
+    r = run(_min_size_request("SKIP"), ds, st)  # $4.80 at a 0.99 fill = 4.84 shares < 5
+    rejected = [t for t in r.trades if t["fill_status"] == "REJECTED_MIN_SIZE"]
+    assert rejected, r.trades
+    sizing = rejected[0]["entry_rule_trace"]["sizing"]
+    assert sizing["below_min_cause"] == "sizing" and sizing["round_up_blocked_by"] is None
+    assert r.data_quality["signals_rejected_min_size_by_cause"] == {"sizing": 1}
+    assert r.data_quality["min_size_rejections_round_up_would_fill"] == 1
+
+
+def test_round_up_places_the_minimum_when_limits_allow() -> None:
+    ds, st = _min_size_dataset()
+    r = run(_min_size_request("ROUND_UP"), ds, st)
+    [trade] = [t for t in r.trades if t["fill_status"] == "FILLED"]
+    assert trade["shares"] == "5.000000"
+    sizing = trade["entry_rule_trace"]["sizing"]
+    assert (
+        sizing["rounded_up_to_min_size"] is True
+        and sizing["size_binding_constraint"] == "min_order_size"
+    )
+    assert r.data_quality["entries_rounded_up_to_min_size"] == 1
+
+
+def test_round_up_respects_the_overshoot_limit_and_hard_caps() -> None:
+    ds, st = _min_size_dataset(min_size="20")  # 20 shares ≈ $19.80, over 2× the $4.80 requested
+    r = run(_min_size_request("ROUND_UP"), ds, st)
+    [row] = r.trades
+    assert row["fill_status"] == "REJECTED_MIN_SIZE"
+    assert row["entry_rule_trace"]["sizing"]["round_up_blocked_by"] == "sizing"
+    r = run(
+        _min_size_request("ROUND_UP", round_up_max_multiple=5, max_notional_per_trade=10), ds, st
+    )
+    [row] = r.trades
+    assert row["entry_rule_trace"]["sizing"]["round_up_blocked_by"] == "max_notional_per_trade"
+
+
+# ------------------------------------------------------------------ EITHER side
+
+
+def test_either_side_buys_the_qualifying_token_and_never_both() -> None:
+    """One market, YES at 0.20 and NO at 0.80: a 'price >= 0.75' rule on EITHER buys NO; a
+    'price <= 0.25' rule buys YES; neither ever holds both sides."""
+    yes = _token("m", [0.20] * 30)
+    no = TokenData(
+        "m-no",
+        "m",
+        1,
+        "No",
+        yes.bar_ts,
+        np.array([0.80] * 30),
+        yes.print_ts,
+        yes.print_price,
+        yes.print_size,
+        yes.print_side,
+    )
+    ds = Dataset({"m": _market("m", "e")}, {"m-yes": yes, "m-no": no})
+    st = SettlementTable({"m": Settlement("UNRESOLVED", None, None)})
+    high = _request(
+        {
+            "universe": {"side": "EITHER"},
+            "entry": {"all": [{"feature": "price", "op": "gte", "value": 0.75}]},
+        }
+    )
+    low = _request(
+        {
+            "universe": {"side": "EITHER"},
+            "entry": {"all": [{"feature": "price", "op": "lte", "value": 0.25}]},
+        }
+    )
+    any_price = _request(
+        {
+            "universe": {"side": "EITHER"},
+            "entry": {"all": [{"feature": "price", "op": "gt", "value": 0.0}]},
+        }
+    )
+    assert [(t["clob_token_id"], t["side"]) for t in run(high, ds, st).trades] == [
+        ("m-no", "BUY_NO")
+    ]
+    assert [(t["clob_token_id"], t["side"]) for t in run(low, ds, st).trades] == [
+        ("m-yes", "BUY_YES")
+    ]
+    both = run(any_price, ds, st)
+    assert len(both.trades) == 1  # the second token is 'already_holding': one position per market
+    assert both.data_quality["signals_blocked_by_constraint"]["already_holding"] >= 1

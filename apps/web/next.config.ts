@@ -9,6 +9,9 @@ const nextConfig: NextConfig = {
   // is running would replace the chunks the dev server is serving.
   distDir:
     process.env.NEXT_DIST_DIR ?? (process.env.NODE_ENV === "production" ? ".next" : ".next-dev"),
+  // Inline-mode runs (tests, local debugging) hold the request open for the whole backtest; the
+  // proxy's 30 s default would cut them off.
+  experimental: { proxyTimeout: 15 * 60 * 1000 },
   // The browser only ever talks to its own origin; /api/* is proxied to FastAPI.
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${apiUrl}/api/:path*` }];

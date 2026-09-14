@@ -25,4 +25,6 @@ def test_fill_statuses_match_prd_7() -> None:
 
 
 def test_no_short_side() -> None:
-    assert {s.value for s in Side} == {"BUY_YES", "BUY_NO"}
+    # PRD §3.3: every side buys a token; EITHER lets the rules pick which. Nothing sells short.
+    assert {s.value for s in Side} == {"BUY_YES", "BUY_NO", "EITHER"}
+    assert not any("SELL" in s.value or "SHORT" in s.value for s in Side)
