@@ -1,0 +1,123 @@
+{
+  "_comment": "When each Polymarket feeType took effect. A market's own feeSchedule (rate, exponent) is authoritative; rate/exponent here are the values observed on live markets and are cross-checked during normalization. Where the start date is ambiguous, the EARLIEST documented date is used, which can only overstate fees (conservative). Evidence: docs/DATA_NOTES.md#fees--finding.",
+  "venue": "international",
+  "schedules": [
+    {
+      "fee_type": "crypto_15_min",
+      "rate": "0.25",
+      "exponent": 2,
+      "applies_to": "ALL_OPEN_MARKETS",
+      "effective_from": "2026-01-05T00:00:00Z",
+      "source_url": "https://docs.polymarket.com/changelog/predictions.md",
+      "notes": "Changelog 2026-01-05: taker fees on 15-minute crypto markets, peak 1.56% at p=0.5 (0.25 x 0.25^2 = 0.015625 per share)."
+    },
+    {
+      "fee_type": "crypto_fees",
+      "rate": "0.25",
+      "exponent": 2,
+      "applies_to": "MARKETS_CREATED_AFTER",
+      "effective_from": "2026-03-06T00:00:00Z",
+      "source_url": "https://docs.polymarket.com/changelog/predictions.md",
+      "notes": "Changelog 2026-03-01: all crypto markets created after 2026-03-06 get the existing crypto fee structure. Observed on a market created 2026-03-11."
+    },
+    {
+      "fee_type": "crypto_fees_v2",
+      "rate": "0.07",
+      "exponent": 1,
+      "applies_to": "ALL_OPEN_MARKETS",
+      "effective_from": "2026-03-30T00:00:00Z",
+      "source_url": "https://docs.polymarket.com/changelog/predictions.md",
+      "notes": "Fee Structure V2. Observed on a crypto market created 2025-08-07 and still open after 2026-03-30."
+    },
+    {
+      "fee_type": "sports_fees_v2",
+      "rate": "0.03",
+      "exponent": 1,
+      "applies_to": "ALL_OPEN_MARKETS",
+      "effective_from": "2026-02-18T00:00:00Z",
+      "source_url": "https://docs.polymarket.com/changelog/predictions.md",
+      "notes": "Earliest documented sports fees: NCAAB and Serie A from 2026-02-18 (observed on a sports market created 2026-02-10). Other sports leagues likely started 2026-03-30; using the earlier date overstates fees for them between those dates. Rate stayed 0.03 for these markets after the 2026-07-10 change."
+    },
+    {
+      "fee_type": "sports_fees_v3",
+      "rate": "0.05",
+      "exponent": 1,
+      "applies_to": "MARKETS_CREATED_AFTER",
+      "effective_from": "2026-07-10T00:00:00Z",
+      "source_url": "https://docs.polymarket.com/changelog/predictions.md",
+      "notes": "Changelog 2026-07-10: sports rate 0.03 -> 0.05. Observed only on sports markets created after that date."
+    },
+    {
+      "fee_type": "politics_fees",
+      "rate": "0.04",
+      "exponent": 1,
+      "applies_to": "ALL_OPEN_MARKETS",
+      "effective_from": "2026-03-30T00:00:00Z",
+      "source_url": "https://docs.polymarket.com/trading/fees.md",
+      "notes": "Fee Structure V2 (changelog 2026-03-30)."
+    },
+    {
+      "fee_type": "finance_prices_fees",
+      "rate": "0.04",
+      "exponent": 1,
+      "applies_to": "ALL_OPEN_MARKETS",
+      "effective_from": "2026-03-30T00:00:00Z",
+      "source_url": "https://docs.polymarket.com/trading/fees.md",
+      "notes": "Fee Structure V2 (changelog 2026-03-30). Finance category."
+    },
+    {
+      "fee_type": "tech_fees",
+      "rate": "0.04",
+      "exponent": 1,
+      "applies_to": "ALL_OPEN_MARKETS",
+      "effective_from": "2026-03-30T00:00:00Z",
+      "source_url": "https://docs.polymarket.com/trading/fees.md",
+      "notes": "Fee Structure V2 (changelog 2026-03-30)."
+    },
+    {
+      "fee_type": "mentions_fees",
+      "rate": "0.04",
+      "exponent": 1,
+      "applies_to": "ALL_OPEN_MARKETS",
+      "effective_from": "2026-03-30T00:00:00Z",
+      "source_url": "https://docs.polymarket.com/trading/fees.md",
+      "notes": "Fee Structure V2 (changelog 2026-03-30)."
+    },
+    {
+      "fee_type": "economics_fees",
+      "rate": "0.05",
+      "exponent": 1,
+      "applies_to": "ALL_OPEN_MARKETS",
+      "effective_from": "2026-03-30T00:00:00Z",
+      "source_url": "https://docs.polymarket.com/trading/fees.md",
+      "notes": "Fee Structure V2 (changelog 2026-03-30)."
+    },
+    {
+      "fee_type": "culture_fees",
+      "rate": "0.05",
+      "exponent": 1,
+      "applies_to": "ALL_OPEN_MARKETS",
+      "effective_from": "2026-03-30T00:00:00Z",
+      "source_url": "https://docs.polymarket.com/trading/fees.md",
+      "notes": "Fee Structure V2 (changelog 2026-03-30)."
+    },
+    {
+      "fee_type": "weather_fees",
+      "rate": "0.05",
+      "exponent": 1,
+      "applies_to": "ALL_OPEN_MARKETS",
+      "effective_from": "2026-03-30T00:00:00Z",
+      "source_url": "https://docs.polymarket.com/trading/fees.md",
+      "notes": "Fee Structure V2 (changelog 2026-03-30)."
+    },
+    {
+      "fee_type": "general_fees",
+      "rate": "0.05",
+      "exponent": 1,
+      "applies_to": "ALL_OPEN_MARKETS",
+      "effective_from": "2026-03-30T00:00:00Z",
+      "source_url": "https://docs.polymarket.com/trading/fees.md",
+      "notes": "Fee Structure V2 (changelog 2026-03-30). Other / General category."
+    }
+  ]
+}

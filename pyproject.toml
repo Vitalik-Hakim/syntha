@@ -43,6 +43,8 @@ extend-exclude = ["apps/web", "docs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+# Line length is enforced by `ruff format` for code; long SQL string literals are fine.
+ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["syntha_*", "check_engine_io"]
@@ -65,5 +67,7 @@ testpaths = [
   "packages/contracts/tests",
   "packages/engine/tests",
   "packages/storage/tests",
+  "services/ingestion/tests",
+  "services/recorder/tests",
   "tools/tests",
 ]

@@ -69,15 +69,23 @@ class Market(Base):
 
     condition_id: Mapped[str] = mapped_column(Text, primary_key=True)
     event_id: Mapped[str | None] = mapped_column(Text, ForeignKey("events.id"))
+    question_id: Mapped[str | None] = mapped_column(Text)
     slug: Mapped[str] = mapped_column(Text)
     question: Mapped[str] = mapped_column(Text)
+    # Derived from fee_type (see docs/DATA_NOTES.md "Fees"); Gamma has no category field.
     category: Mapped[str | None] = mapped_column(Text)
     neg_risk: Mapped[bool] = mapped_column(Boolean, server_default="false")
     tick_size: Mapped[Decimal] = mapped_column(PRICE)
     min_order_size: Mapped[Decimal] = mapped_column(MONEY)
     fees_enabled: Mapped[bool | None] = mapped_column(Boolean)
+    # The market's current feeSchedule; when it took effect comes from fee_schedules.
+    fee_type: Mapped[str | None] = mapped_column(Text)
+    fee_rate: Mapped[Decimal | None] = mapped_column(PRICE)
+    fee_exponent: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime | None] = mapped_column(TSTZ)
     open_ts: Mapped[datetime | None] = mapped_column(TSTZ)
     end_date: Mapped[datetime | None] = mapped_column(TSTZ)
+    closed_time: Mapped[datetime | None] = mapped_column(TSTZ, info=_RESTRICTED)
     resolved_at: Mapped[datetime | None] = mapped_column(TSTZ, info=_RESTRICTED)
     resolution: Mapped[str | None] = mapped_column(Text, info=_RESTRICTED)
     final_volume: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), info=_RESTRICTED)
@@ -95,7 +103,12 @@ class Outcome(Base):
 
 
 class PriceBar(Base):
-    """Timescale hypertable on ts, 7-day chunks."""
+    """Timescale hypertable on ts, 7-day chunks.
+
+    `ts` is the minute the CLOB sampled the price in (floored). The price is a mid-like sample,
+    not a trade (docs/DATA_NOTES.md). `staleness_minutes` is minutes since the last trade print
+    on this token at or before the end of the bar; `is_stale` means no print fell inside the bar.
+    """
 
     __tablename__ = "price_bars"
 
@@ -111,14 +124,19 @@ class TradePrint(Base):
     """Timescale hypertable on ts, 7-day chunks.
 
     Primary key is (id, ts) rather than the PRD's (id): Timescale requires the partitioning
-    column in every unique index. See docs/DATA_NOTES.md.
+    column in every unique index. `print_key` is the dedup key (the Data API has no fill id).
+    See docs/DATA_NOTES.md.
     """
 
     __tablename__ = "trade_prints"
-    __table_args__ = (Index(None, "clob_token_id", "ts"),)
+    __table_args__ = (
+        Index(None, "clob_token_id", "ts"),
+        UniqueConstraint("print_key", "ts"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     ts: Mapped[datetime] = mapped_column(TSTZ, primary_key=True)
+    print_key: Mapped[str] = mapped_column(Text)
     condition_id: Mapped[str] = mapped_column(Text)
     clob_token_id: Mapped[str] = mapped_column(Text)
     price: Mapped[Decimal] = mapped_column(PRICE)
@@ -127,23 +145,61 @@ class TradePrint(Base):
 
 
 class OrderbookSnapshot(Base):
-    """Populated ONLY by the live recorder. Empty for historical periods (PRD §4.2)."""
+    """Populated ONLY by the live recorder. Empty for historical periods (PRD §4.2).
+
+    Timescale hypertable on ts, 1-day chunks. One row per websocket `book` event.
+    """
 
     __tablename__ = "orderbook_snapshots"
 
     clob_token_id: Mapped[str] = mapped_column(Text, primary_key=True)
     ts: Mapped[datetime] = mapped_column(TSTZ, primary_key=True)
+    condition_id: Mapped[str | None] = mapped_column(Text)
     bids: Mapped[list[list[str]]] = mapped_column(JSONB)
     asks: Mapped[list[list[str]]] = mapped_column(JSONB)
+    book_hash: Mapped[str | None] = mapped_column(Text)
+    received_at: Mapped[datetime | None] = mapped_column(TSTZ)
+
+
+class OrderbookDelta(Base):
+    """Populated ONLY by the live recorder: one row per level in a websocket `price_change`.
+
+    `size` is the new resting size at that price level (0 removes the level). Timescale hypertable
+    on ts, 1-day chunks.
+    """
+
+    __tablename__ = "orderbook_deltas"
+    __table_args__ = (Index(None, "clob_token_id", "ts"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(TSTZ, primary_key=True)
+    clob_token_id: Mapped[str] = mapped_column(Text)
+    condition_id: Mapped[str | None] = mapped_column(Text)
+    side: Mapped[str] = mapped_column(Text)
+    price: Mapped[Decimal] = mapped_column(PRICE)
+    size: Mapped[Decimal] = mapped_column(MONEY)
+    best_bid: Mapped[Decimal | None] = mapped_column(PRICE)
+    best_ask: Mapped[Decimal | None] = mapped_column(PRICE)
+    received_at: Mapped[datetime | None] = mapped_column(TSTZ)
 
 
 class FeeSchedule(Base):
+    """When each Polymarket `feeType` took effect (docs/DATA_NOTES.md "Fees").
+
+    The PRD keyed this by category; reality is per-market fee types. `rate`/`exponent` are the
+    documented values for cross-checking. A market's own `fee_rate`/`fee_exponent` are
+    authoritative. `applies_to` is ALL_OPEN_MARKETS or MARKETS_CREATED_AFTER.
+    """
+
     __tablename__ = "fee_schedules"
+    __table_args__ = (UniqueConstraint("venue", "fee_type", "effective_from"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     venue: Mapped[str] = mapped_column(Text)
-    category: Mapped[str] = mapped_column(Text)
-    theta: Mapped[Decimal] = mapped_column(PRICE)
+    fee_type: Mapped[str] = mapped_column(Text)
+    rate: Mapped[Decimal] = mapped_column(PRICE)
+    exponent: Mapped[int] = mapped_column(Integer)
+    applies_to: Mapped[str] = mapped_column(Text)
     effective_from: Mapped[datetime] = mapped_column(TSTZ)
     effective_to: Mapped[datetime | None] = mapped_column(TSTZ)
     source_url: Mapped[str] = mapped_column(Text)
@@ -163,6 +219,27 @@ class DatasetVersion(Base):
     coverage_start: Mapped[datetime | None] = mapped_column(TSTZ)
     coverage_end: Mapped[datetime | None] = mapped_column(TSTZ)
     notes: Mapped[str | None] = mapped_column(Text)
+    quality: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+
+class Collection(Base):
+    """A named market set (PRD §14). Ingestion samples are collections, rebuilt from manifests."""
+
+    __tablename__ = "collections"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    name: Mapped[str] = mapped_column(Text, unique=True)
+    definition: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(TSTZ)
+
+
+class CollectionMarket(Base):
+    __tablename__ = "collection_markets"
+
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("collections.id", ondelete="CASCADE"), primary_key=True
+    )
+    condition_id: Mapped[str] = mapped_column(Text, primary_key=True)
 
 
 # ------------------------------------------------------------------ strategies and runs

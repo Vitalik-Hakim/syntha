@@ -12,7 +12,9 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U syntha -d syntha"]
+      # TCP, not the Unix socket: during first-boot init the entrypoint runs a socket-only
+      # temporary server, which would otherwise report healthy before init has finished.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U syntha -d syntha"]
       interval: 2s
       timeout: 3s
       retries: 30

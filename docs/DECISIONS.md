@@ -2,16 +2,17 @@
 
 ## Open product decisions (PRD §20)
 
-Defaults are implemented as stated. Each needs a product-owner answer.
+The product owner accepted every default on 2026-09-14. Revisit any of these by editing the
+row and noting the date.
 
-| # | Question | Default in use | Status |
+| # | Question | Decision | Status |
 | --- | --- | --- | --- |
-| 1 | Venue: international or US exchange? | International | Awaiting owner |
-| 2 | Warn at $100 bankroll and suggest $1,000? | Yes, non-blocking hint | Awaiting owner |
-| 3 | Multi-outcome events: one position per event? | One, configurable | Awaiting owner |
-| 4 | Backtest history retention | Keep all | Awaiting owner |
-| 5 | Self-hosted vs deployed | Single-user self-hosted | Awaiting owner |
-| 6 | Legal review before any public distribution | n/a (not distributed) | Awaiting owner |
+| 1 | Venue: international or US exchange? | International | Accepted 2026-09-14 |
+| 2 | Warn at $100 bankroll and suggest $1,000? | Yes, non-blocking hint | Accepted 2026-09-14 |
+| 3 | Multi-outcome events: one position per event? | One, configurable | Accepted 2026-09-14 |
+| 4 | Backtest history retention | Keep all | Accepted 2026-09-14 |
+| 5 | Self-hosted vs deployed | Single-user self-hosted | Accepted 2026-09-14 |
+| 6 | Legal review before any public distribution | Not distributed; review before that changes | Accepted 2026-09-14 |
 
 ## Engineering decisions
 
@@ -39,3 +40,38 @@ Defaults are implemented as stated. Each needs a product-owner answer.
   Codegen from the Pydantic models lands in M3, when the API starts returning real data.
 - **No web fonts.** The UI uses system sans and mono stacks, so builds work offline and no third
   party sees requests.
+
+### M1
+
+- **First dataset: seeded stratified sample of 600 markets** scheduled to end in July 2026
+  (product owner's choice, 2026-09-14). Over 40,000 markets ended in that month, 88% of them
+  tiny sports markets, so ingesting everything was not feasible. Strata are `feeType`
+  categories with equal allocation; the sampler sees only market id, condition id and
+  `feeType`, never volume, liquidity or outcome. Open and closed markets are both eligible.
+  Seed `20260914`. The manifest in `data/raw/_manifests/` is immutable.
+- **Raw layer on disk, normalized layer in Postgres.** `data/raw/<endpoint>/<fetch-date>/`
+  holds gzipped response envelopes plus an append-only `index.jsonl`. `make rebuild-normalized`
+  truncates and reloads the normalized tables in one transaction, then records a
+  `dataset_versions` row. Bit-identical means equal content hashes, computed from what Postgres
+  returns (`COPY … ORDER BY` primary key), not from what we intended to write.
+- **Newest fetch wins** when raw files overlap (same market, same price minute). Trade prints
+  are unioned and deduplicated by `print_key`.
+- **Staleness comes from trade prints**, because CLOB bars exist for every minute whether or not
+  anything traded. `is_stale` = no print in the bar; `staleness_minutes` = minutes since the last
+  print (null before the first). Thresholds belong to the backtest config, not the data.
+- **Resolution needs both sources to agree.** Gamma's final `outcomePrices` must match the
+  on-chain `/v2/resolutions` payout. Otherwise the market is `UNRESOLVED` and the disagreement
+  is reported, because a wrong settlement is worse than a missing one. `resolved_at` comes only
+  from `/v2/resolutions`.
+- **Fees are per market plus a dated `fee_type` table**, not the PRD's category table (see
+  DATA_NOTES). Ambiguous start dates use the earliest documented date (conservative).
+- **Fetching is resumable, not transactional.** Units (a market, a trade walk, a price window)
+  are checkpointed in `data/checkpoints/<collection>.jsonl`; failures are logged and retried on
+  the next run. The last price window of a still-open market is re-fetched each run.
+- **Default rate 5 req/s** (PRD), overridable with `--rps`. Every documented limit is at least
+  20 req/s, and Cloudflare throttles rather than rejects.
+- **The recorder watches the top 10 markets by 24h volume**, refreshed hourly. Choosing what to
+  *record* by current volume is fine: it only decides which future data exists. Backtest
+  universes are still selected point-in-time.
+- **No surrogate integer token ids yet.** Readability wins until the engine's access patterns
+  exist (open item in DATA_NOTES).

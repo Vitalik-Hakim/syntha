@@ -754,6 +754,7 @@ version = "0.0.0"
 source = { editable = "services/ingestion" }
 dependencies = [
     { name = "httpx" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "syntha-contracts" },
     { name = "syntha-storage" },
 ]
@@ -761,6 +762,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "syntha-contracts", editable = "packages/contracts" },
     { name = "syntha-storage", editable = "packages/storage" },
 ]
@@ -770,12 +772,16 @@ name = "syntha-recorder"
 version = "0.0.0"
 source = { editable = "services/recorder" }
 dependencies = [
+    { name = "httpx" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "syntha-storage" },
     { name = "websockets" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "syntha-storage", editable = "packages/storage" },
     { name = "websockets", specifier = ">=13" },
 ]

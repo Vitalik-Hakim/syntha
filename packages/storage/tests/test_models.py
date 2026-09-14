@@ -16,6 +16,9 @@ def test_every_prd_table_is_mapped() -> None:
         "backtest_runs",
         "bt_trades",
         "bt_equity",
+        "collections",
+        "collection_markets",
+        "orderbook_deltas",
     }
 
 
@@ -31,6 +34,7 @@ def test_engine_restricted_columns_are_tagged() -> None:
         ("markets", "resolved_at"),
         ("markets", "resolution"),
         ("markets", "final_volume"),
+        ("markets", "closed_time"),
     }
 
 

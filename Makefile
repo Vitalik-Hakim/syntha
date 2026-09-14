@@ -5,6 +5,9 @@ ALEMBIC := uv run alembic -c packages/storage/alembic.ini
 WEB := pnpm --dir apps/web
 
 -include .env
+# Off the common 3000/8000 so Syntha can run alongside other local projects. Override in .env.
+SYNTHA_WEB_PORT ?= 3100
+SYNTHA_API_PORT ?= 8100
 export
 
 .PHONY: help
@@ -28,6 +31,12 @@ up: ## Start Postgres+Timescale and Redis, wait until healthy
 down: ## Stop infra containers (data volume is kept)
 	docker compose down
 
+.PHONY: db-reset
+db-reset: ## DESTRUCTIVE: delete the local Postgres volume, re-init and migrate
+	docker compose down -v
+	docker compose up -d --wait
+	$(ALEMBIC) upgrade head
+
 .PHONY: migrate
 migrate: ## Apply database migrations
 	$(ALEMBIC) upgrade head
@@ -35,12 +44,26 @@ migrate: ## Apply database migrations
 # ---------------------------------------------------------------- dev
 
 .PHONY: dev
-dev: setup up migrate ## Run infra, API (:8000), worker and web (:3000)
+dev: check-ports setup up migrate ## Run infra, API, worker and web (ports: SYNTHA_API_PORT, SYNTHA_WEB_PORT)
+	@echo "Syntha → web http://localhost:$(SYNTHA_WEB_PORT)  api http://localhost:$(SYNTHA_API_PORT)/docs"
 	@$(MAKE) --no-print-directory -j3 dev-api dev-worker dev-web
+
+# Fail before starting anything if a dev port is taken, and say by what.
+.PHONY: check-ports
+check-ports:
+	@command -v lsof >/dev/null || exit 0; \
+	for port in $(SYNTHA_WEB_PORT) $(SYNTHA_API_PORT); do \
+	  owner=$$(lsof -nP -iTCP:$$port -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $$1 " (pid " $$2 ")"}'); \
+	  if [ -n "$$owner" ]; then \
+	    echo "Port $$port is already in use by $$owner." >&2; \
+	    echo "Stop that process, or pick another port in .env (SYNTHA_WEB_PORT / SYNTHA_API_PORT)." >&2; \
+	    exit 1; \
+	  fi; \
+	done
 
 .PHONY: dev-api
 dev-api:
-	uv run uvicorn syntha_api.main:app --reload --port 8000
+	uv run uvicorn syntha_api.main:app --reload --port $(SYNTHA_API_PORT)
 
 .PHONY: dev-worker
 dev-worker:
@@ -48,7 +71,7 @@ dev-worker:
 
 .PHONY: dev-web
 dev-web:
-	$(WEB) dev
+	$(WEB) exec next dev --port $(SYNTHA_WEB_PORT)
 
 # ---------------------------------------------------------------- quality
 
@@ -89,6 +112,39 @@ ci: lint check-engine-io test build-web ## Everything CI runs
 
 # ---------------------------------------------------------------- data (M1)
 
+# The M1 dataset: a seeded, stratified sample of markets scheduled to end in July 2026.
+COLLECTION ?= july-2026-stratified-600
+SAMPLE_START ?= 2026-07-01T00:00:00Z
+SAMPLE_END ?= 2026-08-01T00:00:00Z
+SAMPLE_N ?= 600
+SAMPLE_SEED ?= 20260914
+INGEST := uv run syntha-ingest
+
+.PHONY: ingest-sample
+ingest-sample: ## Draw the collection sample (writes an immutable manifest to data/raw/_manifests)
+	$(INGEST) sample --name $(COLLECTION) --end-date-min $(SAMPLE_START) \
+		--end-date-max $(SAMPLE_END) --n $(SAMPLE_N) --seed $(SAMPLE_SEED)
+
+.PHONY: ingest-fetch
+ingest-fetch: ## Fetch metadata, resolutions, prints and 1-minute prices into data/raw (resumable)
+	$(INGEST) fetch --name $(COLLECTION)
+
 .PHONY: rebuild-normalized
-rebuild-normalized: ## Rebuild normalized/ from raw/ (implemented in M1)
-	@echo "rebuild-normalized is implemented in milestone M1" >&2; exit 1
+rebuild-normalized: ## Rebuild the normalized tables from data/raw alone and record a dataset version
+	$(INGEST) normalize
+
+.PHONY: verify-normalized
+verify-normalized: ## Check the normalized tables still match the latest dataset version hash
+	$(INGEST) verify
+
+.PHONY: data-report
+data-report: ## Print the latest data-quality report
+	$(INGEST) report
+
+.PHONY: m1-acceptance
+m1-acceptance: ## Rebuild twice (hashes must match) and check 500+ markets have full 1-minute history
+	uv run python tools/m1_acceptance.py
+
+.PHONY: recorder
+recorder: ## Record the live order book (top 10 markets by 24h volume) into Postgres and data/raw
+	uv run python -m syntha_recorder

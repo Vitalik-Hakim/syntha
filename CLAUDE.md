@@ -27,3 +27,10 @@ changing engine, storage or ingestion code.
   `packages/storage/src/syntha_storage/migrations/versions/` and a matching edit to
   `syntha_storage/models.py`. The migration test fails if they drift.
 - Money and prices are `Decimal` / `numeric`, never float.
+- `data/raw/` is the permanent, append-only record of what Polymarket returned. Never edit or
+  delete it; 1-minute price history may stop being retrievable (docs/DATA_NOTES.md). Normalized
+  tables are disposable: `make rebuild-normalized`.
+- Run DB tests against `syntha_test`, not the dev database. The migration test downgrades its
+  target to empty.
+- Polymarket API behaviour is verified, not assumed. Before relying on an endpoint detail, check
+  docs/DATA_NOTES.md. Anything new gets a live probe and an entry there.

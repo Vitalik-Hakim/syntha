@@ -47,7 +47,12 @@ def test_migration_matches_models_and_round_trips(
                         text("SELECT hypertable_name FROM timescaledb_information.hypertables")
                     ).scalars()
                 )
-                assert {"price_bars", "trade_prints"} <= hypertables
+                assert {
+                    "price_bars",
+                    "trade_prints",
+                    "orderbook_snapshots",
+                    "orderbook_deltas",
+                } <= hypertables
     finally:
         engine.dispose()
 
