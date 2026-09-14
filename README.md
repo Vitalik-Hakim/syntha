@@ -9,8 +9,8 @@ Paper only. Syntha never places orders, holds funds, touches keys or connects a 
 - Where reality differs from the spec: [docs/DATA_NOTES.md](docs/DATA_NOTES.md)
 - Decisions and open questions: [docs/DECISIONS.md](docs/DECISIONS.md)
 
-**Status:** M1 (data). Historical ingestion, the raw → normalized rebuild, the data-quality
-report and the live order-book recorder exist. No backtest engine or results yet (M2).
+**Status:** M2 (engine). Historical data, the backtest engine and the `strategy-lab` CLI work end
+to end. No web results UI yet (M3).
 
 ## Prerequisites
 
@@ -69,6 +69,22 @@ a sampled mid-like price, not trades, and fees have history the API only partly 
 The recorder produces roughly 5–6M order-book delta rows per day for 10 markets. Compression
 starts after two days.
 
+## Backtests
+
+```sh
+uv run strategy-lab builtins                                   # the four example strategies
+uv run strategy-lab validate my-strategy.json                  # schema + feature checks
+uv run strategy-lab run examples/underdog-realistic.json       # against the database
+uv run strategy-lab run examples/underdog-realistic.json --preset CONSERVATIVE
+make m2-acceptance                                             # golden fixtures, look-ahead attacks, determinism
+make bench-engine                                              # 1,000 markets × 90 days benchmark
+```
+
+A config is a `BacktestRequest` ([schema](packages/contracts/backtest-request.schema.json)); the
+strategy inside it is DSL ([schema](packages/contracts/strategy.schema.json)). Each run prints a
+summary and writes trades, equity, ledger, metrics and data quality to `data/runs/<run id>/`.
+Every summary starts with the PRD's simulated-results disclaimer and any honesty warnings.
+
 ## Checks
 
 ```sh
@@ -78,14 +94,15 @@ make test              # pytest
 make ci                # everything CI runs, plus the web build
 ```
 
-Database tests run when `SYNTHA_TEST_DATABASE_URL` is set, which CI does. To run them locally
-against the compose database:
+Database tests run when `SYNTHA_TEST_DATABASE_URL` is set, which CI does. Run them locally
+against a separate `syntha_test` database, **never the dev database**: the tests truncate tables
+and downgrade their target to empty.
 
 ```sh
-SYNTHA_TEST_DATABASE_URL=postgresql+psycopg://syntha:syntha@localhost:5432/syntha make test
+docker compose exec postgres psql -U syntha -c "CREATE DATABASE syntha_test"   # once
+SYNTHA_TEST_DATABASE_URL=postgresql+psycopg://syntha:syntha@localhost:5432/syntha_test \
+SYNTHA_TEST_REDIS_URL=redis://localhost:6379/0 make test
 ```
-
-Warning: that test downgrades the database to empty and migrates it back up.
 
 ## Layout
 
@@ -97,7 +114,8 @@ packages/engine     Pure backtest engine, no I/O             syntha_engine
 packages/storage    SQLAlchemy models + Alembic migrations   syntha_storage
 services/ingestion  Sampling, fetching, raw → normalized      syntha_ingestion  (syntha-ingest CLI)
 services/recorder   Live L2 order-book recorder              syntha_recorder
-services/worker     RQ backtest workers                      syntha_worker
-tools/              Repo tooling (engine I/O boundary check, M1 acceptance)
-data/               raw/ layer, checkpoints (gitignored)
+services/worker     DB loader, strategy-lab CLI, RQ workers  syntha_worker     (strategy-lab CLI)
+tools/              I/O boundary check, schema generation, M1 acceptance, engine benchmark
+examples/           Ready-to-run BacktestRequest configs
+data/               raw/ layer, checkpoints, run outputs (gitignored)
 ```

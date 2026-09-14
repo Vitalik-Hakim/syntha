@@ -1,0 +1,50 @@
+{
+  "strategy": {
+    "dsl_version": 1,
+    "name": "Buy and Hold to Resolution",
+    "description": "Example strategy \u2014 not a trading recommendation. Buys at the first eligible bar of each market and holds to settlement. The honest benchmark for every other strategy.",
+    "universe": {
+      "side": "BUY_YES"
+    },
+    "entry": {
+      "all": [
+        {
+          "feature": "price",
+          "op": "gt",
+          "value": 0.0
+        }
+      ]
+    },
+    "sizing": {
+      "mode": "PCT_OF_INITIAL",
+      "value": 0.02
+    },
+    "exit": {
+      "any": []
+    },
+    "constraints": {
+      "max_open_positions": 50,
+      "max_total_exposure_pct": 1.0,
+      "max_positions_per_event": 1,
+      "cooldown_minutes_per_market": 0,
+      "allow_reentry_same_market": false
+    }
+  },
+  "dataset": {
+    "collection": "july-2026-stratified-600"
+  },
+  "starting_capital": "100",
+  "seed": 1,
+  "bar_interval_minutes": 1,
+  "decision_lag_bars": 1,
+  "execution": {
+    "model": "TRADE_PRINT",
+    "slippage_ticks": 1,
+    "liquidity_participation": 0.1,
+    "partial_fill_policy": "ALLOW"
+  },
+  "fees": {
+    "mode": "HISTORICAL"
+  },
+  "max_stale_minutes": 60
+}

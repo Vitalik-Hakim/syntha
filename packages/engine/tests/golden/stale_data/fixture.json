@@ -1,0 +1,118 @@
+{
+  "name": "stale_data",
+  "asserts": "Gap > threshold flags trade and blocks entry",
+  "derivation": [
+    "max_stale_minutes 5. YES token sampled at m0, m1, then nothing until m60, m61 (all 0.30). Resolves YES at m200.",
+    "Entry rule: price <= 0.30 and time_since_open_minutes >= 10 (true from bar m9, whose close is minute 10).",
+    "Bars m7..m59 have a price whose last sample is more than 5 minutes old -> not eligible: 53 bars blocked as stale.",
+    "First eligible signal m60 (fresh), executes m61: FIXED_CASH 3 -> 10 shares at 0.30, cash 97.",
+    "Held to m200: last real sample m61 is far older than 5 minutes before resolution -> settled_on_stale_data flag.",
+    "Settlement 10 x 1 = 10 -> cash 107."
+  ],
+  "start": "2026-01-01T00:00:00Z",
+  "end_minute": 200,
+  "markets": [
+    {
+      "condition_id": "m1",
+      "event_id": "ev-m1",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "YES",
+      "resolved_minute": 200,
+      "closed_minute": null,
+      "tokens": [
+        {
+          "clob_token_id": "yes1",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "no1",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ]
+    }
+  ],
+  "fee_schedules": [],
+  "request": {
+    "strategy": {
+      "name": "golden",
+      "universe": {
+        "side": "BUY_YES"
+      },
+      "entry": {
+        "all": [
+          {
+            "feature": "price",
+            "op": "lte",
+            "value": 0.3
+          },
+          {
+            "feature": "time_since_open_minutes",
+            "op": "gte",
+            "value": 10
+          }
+        ]
+      },
+      "sizing": {
+        "mode": "FIXED_CASH",
+        "value": 3
+      },
+      "exit": {
+        "any": []
+      },
+      "constraints": {
+        "max_open_positions": 5,
+        "max_total_exposure_pct": 0.25,
+        "max_positions_per_event": 1,
+        "cooldown_minutes_per_market": 0,
+        "allow_reentry_same_market": false
+      }
+    },
+    "starting_capital": "100",
+    "seed": 7,
+    "bar_interval_minutes": 1,
+    "decision_lag_bars": 1,
+    "execution": {
+      "model": "LAST_PRICE",
+      "slippage_ticks": 0,
+      "liquidity_participation": null
+    },
+    "fees": {
+      "mode": "FIXED",
+      "fixed_rate": "0"
+    },
+    "max_stale_minutes": 5
+  },
+  "expected": {
+    "cash_end": "107",
+    "equity_end": "107",
+    "trades": [
+      {
+        "seq": 1,
+        "signal_minute": 60,
+        "entry_minute": 61,
+        "shares": "10",
+        "entry_price": "0.30",
+        "exit_minute": 200,
+        "exit_reason": "MARKET_RESOLVED",
+        "net_pnl": "7.00",
+        "settled_on_stale_data": true
+      }
+    ],
+    "data_quality": {
+      "signals_generated": 1,
+      "bars_blocked_stale": 53,
+      "settled_on_stale_data": 1
+    }
+  }
+}

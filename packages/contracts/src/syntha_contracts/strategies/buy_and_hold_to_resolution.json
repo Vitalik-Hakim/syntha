@@ -1,0 +1,16 @@
+{
+  "dsl_version": 1,
+  "name": "Buy and Hold to Resolution",
+  "description": "Example strategy — not a trading recommendation. Buys at the first eligible bar of each market and holds to settlement. The honest benchmark for every other strategy.",
+  "universe": {"side": "BUY_YES"},
+  "entry": {"all": [{"feature": "price", "op": "gt", "value": 0.0}]},
+  "sizing": {"mode": "PCT_OF_INITIAL", "value": 0.02},
+  "exit": {"any": []},
+  "constraints": {
+    "max_open_positions": 50,
+    "max_total_exposure_pct": 1.0,
+    "max_positions_per_event": 1,
+    "cooldown_minutes_per_market": 0,
+    "allow_reentry_same_market": false
+  }
+}

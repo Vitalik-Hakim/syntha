@@ -1,0 +1,21 @@
+{
+  "dsl_version": 1,
+  "name": "Favourite Drift",
+  "description": "Example strategy — not a trading recommendation. Buys strong favourites (price >= 0.80) that are still rising and holds to resolution.",
+  "universe": {"side": "BUY_YES", "min_time_to_resolution_minutes": 60},
+  "entry": {
+    "all": [
+      {"feature": "price", "op": "gte", "value": 0.80},
+      {"feature": "price_change_pct", "params": {"lookback_minutes": 60}, "op": "gt", "value": 0.0}
+    ]
+  },
+  "sizing": {"mode": "PCT_OF_EQUITY", "value": 0.05},
+  "exit": {"any": []},
+  "constraints": {
+    "max_open_positions": 5,
+    "max_total_exposure_pct": 0.25,
+    "max_positions_per_event": 1,
+    "cooldown_minutes_per_market": 0,
+    "allow_reentry_same_market": false
+  }
+}

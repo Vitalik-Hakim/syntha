@@ -1,0 +1,135 @@
+{
+  "name": "fee_schedule_change",
+  "asserts": "Same trade on either side of an effective date gets different fees",
+  "derivation": [
+    "HISTORICAL fees. Market fee_type test_fees (rate 0.05, exponent 1); its schedule takes effect at m5 for all open markets.",
+    "YES token at 0.50 for m0-m9. FIXED_CASH 10, exit after holding 2 minutes, re-entry allowed, no slippage.",
+    "Trade 1: signal m0, fill m1 (before m5): 20 shares, fee 0. Held 2 min at m3 -> exit at m4 (before m5): fee 0. Cash 100.",
+    "Trade 2: signal m5, fill m6 (after m5): 20 shares, fee = 20 x 0.05 x (0.50 x 0.50) = 0.25000. Exit signal m8, fill m9: fee 0.25000.",
+    "Cash = 100 - 10 - 0.25 + 10 - 0.25 = 99.50. Trade 2 net = -0.50."
+  ],
+  "start": "2026-01-01T00:00:00Z",
+  "end_minute": null,
+  "markets": [
+    {
+      "condition_id": "m1",
+      "event_id": "ev-m1",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": true,
+      "fee_type": "test_fees",
+      "fee_rate": "0.05",
+      "fee_exponent": 1,
+      "resolution": "UNRESOLVED",
+      "resolved_minute": null,
+      "closed_minute": null,
+      "tokens": [
+        {
+          "clob_token_id": "yes1",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "no1",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ]
+    }
+  ],
+  "fee_schedules": [
+    {
+      "fee_type": "test_fees",
+      "rate": "0.05",
+      "exponent": 1,
+      "applies_to": "ALL_OPEN_MARKETS",
+      "effective_minute": 5
+    }
+  ],
+  "request": {
+    "strategy": {
+      "name": "golden",
+      "universe": {
+        "side": "BUY_YES"
+      },
+      "entry": {
+        "all": [
+          {
+            "feature": "price",
+            "op": "lte",
+            "value": 0.5
+          }
+        ]
+      },
+      "sizing": {
+        "mode": "FIXED_CASH",
+        "value": 10
+      },
+      "exit": {
+        "any": [
+          {
+            "type": "MAX_HOLD_MINUTES",
+            "value": 2
+          }
+        ]
+      },
+      "constraints": {
+        "max_open_positions": 5,
+        "max_total_exposure_pct": 0.25,
+        "max_positions_per_event": 1,
+        "cooldown_minutes_per_market": 0,
+        "allow_reentry_same_market": true
+      }
+    },
+    "starting_capital": "100",
+    "seed": 7,
+    "bar_interval_minutes": 1,
+    "decision_lag_bars": 1,
+    "execution": {
+      "model": "LAST_PRICE",
+      "slippage_ticks": 0,
+      "liquidity_participation": null
+    },
+    "fees": {
+      "mode": "HISTORICAL"
+    },
+    "max_stale_minutes": 60
+  },
+  "expected": {
+    "cash_end": "99.50",
+    "equity_end": "99.50",
+    "trades": [
+      {
+        "seq": 1,
+        "entry_minute": 1,
+        "exit_minute": 4,
+        "entry_fee": "0",
+        "exit_fee": "0",
+        "exit_reason": "MAX_HOLD",
+        "net_pnl": "0"
+      },
+      {
+        "seq": 2,
+        "signal_minute": 5,
+        "entry_minute": 6,
+        "exit_minute": 9,
+        "entry_fee": "0.25",
+        "exit_fee": "0.25",
+        "exit_reason": "MAX_HOLD",
+        "net_pnl": "-0.50"
+      }
+    ],
+    "data_quality": {
+      "signals_generated": 2,
+      "signals_filled": 2,
+      "fee_mode": "HISTORICAL",
+      "fee_schedules_applied": [
+        "test_fees@1767225900"
+      ]
+    }
+  }
+}

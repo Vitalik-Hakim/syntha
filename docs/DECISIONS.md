@@ -79,3 +79,74 @@ row and noting the date.
   universes are still selected point-in-time.
 - **No surrogate integer token ids yet.** Readability wins until the engine's access patterns
   exist (open item in DATA_NOTES).
+
+### M2
+
+- **Contracts are the source of truth.** `StrategyDSL` and `BacktestRequest` are Pydantic models in
+  `syntha_contracts`; `packages/contracts/strategy.schema.json` and `backtest-request.schema.json`
+  are generated (`make schemas`), and a test fails if the checked-in schemas drift. Unknown fields
+  and unknown feature names are rejected. `BOOK` execution is refused (v2).
+- **What the engine receives, split by who may see it.** `MarketTerms` and `TokenData` carry
+  pre-trade facts; `SettlementTable` alone carries resolution, resolution time and close time.
+  Strategies only ever get a `MarketView` (PRD §5.2). The loader enforces this split at the DB
+  boundary.
+- **Bar semantics.** Bar k is labelled by its open; its data (last price sample, prints) is complete
+  at its close, and time-based features are measured at the close. With the default 1-bar lag a
+  signal from bar k executes against bar k+1's prints. Lag 0 is allowed and flagged
+  `SAME-BAR FILL — OPTIMISTIC`.
+- **Two evaluation paths that must agree.** Entry rules are precomputed per token with NumPy
+  (every feature has a causality test). Every *recorded* entry attempt (fills, and the final
+  refusal of each signal episode) is re-evaluated through the look-ahead-safe `MarketView` to
+  build its rule trace, and the run fails with `EngineInconsistency` if the paths disagree.
+  Exits and custom Python strategies always go through `MarketView`.
+- **Signal episodes.** A continuously true entry condition is one signal. Failed attempts retry on
+  later bars while it holds; the episode ends on a fill, when the condition lapses, or on a
+  permanent refusal (unknown minimum size, market closed, end of data). An episode that never
+  fills is one trade row with `attempts` and `attempt_refusals`. Found on the first real run:
+  without episodes, buy-and-hold produced 1.67M "signals" and trade rows for 118 fills on thin
+  markets.
+- **Execution pipeline** (PRD §11): reference → adjustment → slippage → tick quantisation →
+  bounds → fee. The PRD says both "round_half_even" and "rounded against the trader"; we round
+  against the trader (ceiling for buys, floor for sells), which is the conservative reading.
+- **TRADE_PRINT** uses all taker prints in the execution bar, both sides: VWAP reference,
+  participation cap on printed shares, worst print under adverse selection. No prints means
+  `UNEXECUTABLE` unless the fallback is enabled (last price, doubled slippage, flagged).
+- **Fees** (per docs/DATA_NOTES.md): `shares × rate × (p(1−p))^exponent`, 5 dp half-even, fee terms
+  resolved at each fill's own timestamp (entry and exit can differ across a schedule change). No
+  fee at settlement by default (config flag).
+- **Sizing.** Notional is clamped in order: `max_notional_per_trade`, cash (fee-inclusive),
+  exposure headroom (cap × equity − marked positions), liquidity cap. `size_binding_constraint`
+  names the tightest, and the first in that order on ties. Shares are floored to `share_precision`.
+  Below the market minimum means `REJECTED_MIN_SIZE`; an unknown minimum means `UNEXECUTABLE`.
+- **Exits** trigger on the bar's price and execute through the same model as entries. Partial
+  exits are allowed under liquidity caps; unexecutable exits keep the position and re-evaluate on
+  the next bar. Exits do not apply the minimum order size (assumption, see DATA_NOTES).
+- **Trading halts** from the first bar whose close reaches the market's resolution or close time;
+  positions settle at the first bar at or after resolution.
+- **End of the backtest.** Without an explicit end date, the clock runs until the last selected
+  market resolves, so positions settle rather than being marked. Anything still open at the end is
+  valued at its last mark with no costs (`END_OF_BACKTEST`).
+- **P&L attribution.** `entry_ref_price`/exit reference = the execution model's reference price
+  (VWAP for TRADE_PRINT, bar price for LAST_PRICE). `gross = shares × (exit ref − entry ref)`,
+  `slippage = shares × |fill − ref|` on both legs, `net = gross − slippage − fees` (exact in Decimal).
+- **Invariants** (PRD §10.2) are asserted after every bar and fail the run: cash ≥ 0, exact
+  closed-form cash reconciliation, ledger running balance, position limits, entry within exposure
+  headroom.
+- **Performance.** Prints are stored sparsely (under 1% of real bars have any), candidate events
+  as sorted NumPy arrays, marks computed once per bar. `make bench-engine`: 1,000 markets × 90 days
+  of 1-minute bars (129.6M bars), Underdog strategy, **30.0 s, 2.4 GB peak** on a 10-core, 16 GB
+  laptop (PRD target: under 60 s). Loading from Postgres is separate: 600 markets / 21M bars take
+  about 27 s.
+- **CLI.** `strategy-lab run config.json` (PRD M2) writes `request.json`, `manifest.json`,
+  `metrics.json`, `data_quality.json`, `trades.csv/jsonl`, `equity.csv` and `ledger.csv` to
+  `data/runs/<run id>`. File run ids are `BT-YYYYMMDD-HHMMSS-<config hash>`; the database
+  sequence form `BT-YYYYMMDD-NNNNN` arrives with persisted runs in M3.
+- **Every run explains its signal count.** `data_quality.entry_funnel` counts bars lost at each
+  gate in order (no price yet, trading halted, before open, as-of volume, time to resolution,
+  stale price), then how often the entry rules held when eligible and ignoring the universe.
+  Found on the real data: the built-in Underdog produced 0 signals on the July sample because none
+  of its 58 sports markets ever reached the $10k as-of volume filter (median lifetime notional
+  $1.75), although its entry rules held on 115 bars.
+- **Not in M2 (per PRD milestones):** bootstrap confidence intervals, null-hypothesis
+  comparisons and the preset triple-run (M5); near-miss traces (M4); persisting runs to
+  `backtest_runs` (M3).

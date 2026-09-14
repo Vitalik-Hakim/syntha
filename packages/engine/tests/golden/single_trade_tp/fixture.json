@@ -1,0 +1,128 @@
+{
+  "name": "single_trade_tp",
+  "asserts": "One entry, take-profit hit, exact fee and slippage arithmetic",
+  "derivation": [
+    "LAST_PRICE, 1 tick slippage, FIXED fee rate 0.04 exponent 1, FIXED_CASH 10, take profit 10%.",
+    "Bar prices: m0-m2 0.40, m3-m5 0.46. Entry rule price <= 0.40 fires at m0; executes at m1 (lag 1).",
+    "Entry: ref 0.40 + 0.01 = 0.41. shares = floor(10 / 0.41, 2dp) = floor(24.3902) = 24.39.",
+    "Entry fee = 24.39 x 0.04 x (0.41 x 0.59) = 24.39 x 0.009676 = 0.23599764 -> 0.23600 (5 dp).",
+    "Cash after entry = 100 - 24.39 x 0.41 (9.9999) - 0.23600 = 89.76410.",
+    "m2: 0.40 < 0.41 x 1.10 = 0.451. m3: 0.46 >= 0.451 -> exit signal; executes m4.",
+    "Exit: ref 0.46 - 0.01 = 0.45. Proceeds 24.39 x 0.45 = 10.9755. Fee = 24.39 x 0.04 x (0.45 x 0.55) = 0.241461 -> 0.24146.",
+    "Cash = 89.76410 + 10.9755 - 0.24146 = 100.49814.",
+    "gross = 24.39 x (0.46 - 0.40) = 1.4634; slippage = 24.39 x 0.01 x 2 = 0.4878; fees = 0.47746; net = 1.4634 - 0.4878 - 0.47746 = 0.49814."
+  ],
+  "start": "2026-01-01T00:00:00Z",
+  "end_minute": null,
+  "markets": [
+    {
+      "condition_id": "m1",
+      "event_id": "ev-m1",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "UNRESOLVED",
+      "resolved_minute": null,
+      "closed_minute": null,
+      "tokens": [
+        {
+          "clob_token_id": "yes1",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "no1",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ]
+    }
+  ],
+  "fee_schedules": [],
+  "request": {
+    "strategy": {
+      "name": "golden",
+      "universe": {
+        "side": "BUY_YES"
+      },
+      "entry": {
+        "all": [
+          {
+            "feature": "price",
+            "op": "lte",
+            "value": 0.4
+          }
+        ]
+      },
+      "sizing": {
+        "mode": "FIXED_CASH",
+        "value": 10
+      },
+      "exit": {
+        "any": [
+          {
+            "type": "TAKE_PROFIT_PCT",
+            "value": 0.1
+          }
+        ]
+      },
+      "constraints": {
+        "max_open_positions": 5,
+        "max_total_exposure_pct": 0.25,
+        "max_positions_per_event": 1,
+        "cooldown_minutes_per_market": 0,
+        "allow_reentry_same_market": false
+      }
+    },
+    "starting_capital": "100",
+    "seed": 7,
+    "bar_interval_minutes": 1,
+    "decision_lag_bars": 1,
+    "execution": {
+      "model": "LAST_PRICE",
+      "slippage_ticks": 1,
+      "liquidity_participation": null
+    },
+    "fees": {
+      "mode": "FIXED",
+      "fixed_rate": "0.04"
+    },
+    "max_stale_minutes": 60
+  },
+  "expected": {
+    "cash_end": "100.49814",
+    "equity_end": "100.49814",
+    "trades": [
+      {
+        "seq": 1,
+        "fill_status": "FILLED",
+        "signal_minute": 0,
+        "entry_minute": 1,
+        "exit_minute": 4,
+        "entry_ref_price": "0.40",
+        "entry_price": "0.41",
+        "shares": "24.39",
+        "entry_fee": "0.23600",
+        "exit_price": "0.45",
+        "exit_fee": "0.24146",
+        "exit_reason": "TAKE_PROFIT",
+        "gross_pnl": "1.4634",
+        "slippage_cost": "0.4878",
+        "fees_total": "0.47746",
+        "net_pnl": "0.49814",
+        "size_binding_constraint": null
+      }
+    ],
+    "data_quality": {
+      "signals_generated": 1,
+      "signals_filled": 1
+    }
+  }
+}

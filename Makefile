@@ -103,6 +103,10 @@ check-engine-io: ## Fail if packages/engine performs or imports I/O (PRD §6)
 test: ## Run Python tests (DB tests run when SYNTHA_TEST_DATABASE_URL is set)
 	uv run pytest
 
+.PHONY: schemas
+schemas: ## Regenerate published JSON Schemas from the Pydantic contracts
+	uv run python tools/gen_schemas.py
+
 .PHONY: build-web
 build-web:
 	$(WEB) build
@@ -144,6 +148,18 @@ data-report: ## Print the latest data-quality report
 .PHONY: m1-acceptance
 m1-acceptance: ## Rebuild twice (hashes must match) and check 500+ markets have full 1-minute history
 	uv run python tools/m1_acceptance.py
+
+# ---------------------------------------------------------------- engine (M2)
+
+.PHONY: m2-acceptance
+m2-acceptance: check-engine-io ## Golden fixtures, look-ahead attacks, determinism, properties
+	uv run pytest -q packages/engine/tests/test_golden.py packages/engine/tests/test_lookahead_adversarial.py \
+		packages/engine/tests/test_determinism.py packages/engine/tests/test_properties.py \
+		packages/engine/tests/test_features_causal.py packages/engine/tests/test_episodes.py
+
+.PHONY: bench-engine
+bench-engine: ## Engine benchmark at the PRD target (1,000 markets × 90 days of 1-minute bars)
+	uv run python tools/bench_engine.py 1000 90
 
 .PHONY: recorder
 recorder: ## Record the live order book (top 10 markets by 24h volume) into Postgres and data/raw

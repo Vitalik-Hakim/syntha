@@ -1,16 +1,24 @@
 [project]
 name = "syntha-worker"
 version = "0.0.0"
-description = "Syntha RQ workers that execute backtests"
+description = "Syntha backtest runner: DB loader, golden fixtures, strategy-lab CLI, RQ workers"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+  "numpy>=2.0",
+  "polars>=1.5",
+  "psycopg[binary]>=3.2",
   "redis>=5.0",
   "rq>=1.16",
+  "syntha-contracts",
   "syntha-engine",
   "syntha-storage",
 ]
 
+[project.scripts]
+strategy-lab = "syntha_worker.cli:main"
+
 [tool.uv.sources]
+syntha-contracts = { workspace = true }
 syntha-engine = { workspace = true }
 syntha-storage = { workspace = true }
 

@@ -1,0 +1,155 @@
+{
+  "name": "cash_constrained",
+  "asserts": "Two simultaneous signals, only one affordable; second rejected",
+  "derivation": [
+    "Two markets (A, B), YES tokens at 0.50 for m0-m2, min order size 100 shares, FIXED_SHARES 120, exposure cap 100%.",
+    "Both signal at m0 and execute at m1 in token order (tokA first).",
+    "tokA: 120 x 0.50 = 60 -> cash 40.",
+    "tokB: equity 100 (40 cash + 60 marked), cash allows floor(40 / 0.50) = 80 shares < 120; binding constraint cash",
+    "(exposure headroom 100 - 60 = 40 also allows 80 but is not tighter). 80 < minimum 100 -> REJECTED_MIN_SIZE.",
+    "tokB's entry condition still holds at m2, so the same signal episode retries (attempt 2), due at m3, which is past the data: pending at end.",
+    "One episode for tokB -> one REJECTED_MIN_SIZE row with attempts = 2; signals generated = 2 (tokA, tokB).",
+    "End: tokA valued at mark 0.50 -> cash 40 + 60 = 100."
+  ],
+  "start": "2026-01-01T00:00:00Z",
+  "end_minute": null,
+  "markets": [
+    {
+      "condition_id": "A",
+      "event_id": "ev-A",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "100",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "UNRESOLVED",
+      "resolved_minute": null,
+      "closed_minute": null,
+      "tokens": [
+        {
+          "clob_token_id": "tokA",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "noA",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ]
+    },
+    {
+      "condition_id": "B",
+      "event_id": "ev-B",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "100",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "UNRESOLVED",
+      "resolved_minute": null,
+      "closed_minute": null,
+      "tokens": [
+        {
+          "clob_token_id": "tokB",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "noB",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ]
+    }
+  ],
+  "fee_schedules": [],
+  "request": {
+    "strategy": {
+      "name": "golden",
+      "universe": {
+        "side": "BUY_YES"
+      },
+      "entry": {
+        "all": [
+          {
+            "feature": "price",
+            "op": "lte",
+            "value": 0.5
+          }
+        ]
+      },
+      "sizing": {
+        "mode": "FIXED_SHARES",
+        "value": 120
+      },
+      "exit": {
+        "any": []
+      },
+      "constraints": {
+        "max_open_positions": 5,
+        "max_total_exposure_pct": 1.0,
+        "max_positions_per_event": 1,
+        "cooldown_minutes_per_market": 0,
+        "allow_reentry_same_market": false
+      }
+    },
+    "starting_capital": "100",
+    "seed": 7,
+    "bar_interval_minutes": 1,
+    "decision_lag_bars": 1,
+    "execution": {
+      "model": "LAST_PRICE",
+      "slippage_ticks": 0,
+      "liquidity_participation": null
+    },
+    "fees": {
+      "mode": "FIXED",
+      "fixed_rate": "0"
+    },
+    "max_stale_minutes": 60
+  },
+  "expected": {
+    "cash_end": "100",
+    "equity_end": "100",
+    "trades": [
+      {
+        "seq": 1,
+        "fill_status": "FILLED",
+        "clob_token_id": "tokA",
+        "entry_minute": 1,
+        "shares": "120",
+        "entry_price": "0.50",
+        "exit_reason": "END_OF_BACKTEST",
+        "exit_price": "0.50",
+        "net_pnl": "0"
+      },
+      {
+        "seq": 2,
+        "fill_status": "REJECTED_MIN_SIZE",
+        "clob_token_id": "tokB",
+        "entry_minute": 1,
+        "shares": "0",
+        "size_binding_constraint": "cash",
+        "net_pnl": "0",
+        "attempts": 2
+      }
+    ],
+    "data_quality": {
+      "signals_generated": 2,
+      "signals_filled": 1,
+      "signals_rejected_min_size": 1,
+      "signals_pending_at_end": 1
+    }
+  }
+}

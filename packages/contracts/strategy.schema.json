@@ -1,0 +1,486 @@
+{
+  "$defs": {
+    "Condition": {
+      "additionalProperties": false,
+      "properties": {
+        "feature": {
+          "enum": [
+            "price",
+            "price_change_pct",
+            "price_change_abs",
+            "traded_volume",
+            "volume_ratio",
+            "print_count",
+            "vwap_gap",
+            "realized_vol",
+            "time_to_resolution_minutes",
+            "time_since_open_minutes",
+            "spread_proxy",
+            "staleness_minutes",
+            "minutes_since_last_print"
+          ],
+          "title": "Feature",
+          "type": "string"
+        },
+        "op": {
+          "enum": [
+            "lt",
+            "lte",
+            "gt",
+            "gte",
+            "eq",
+            "neq"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Params",
+          "type": "object"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "feature",
+        "op",
+        "value"
+      ],
+      "title": "Condition",
+      "type": "object"
+    },
+    "Constraints": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_reentry_same_market": {
+          "default": true,
+          "title": "Allow Reentry Same Market",
+          "type": "boolean"
+        },
+        "cooldown_minutes_per_market": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cooldown Minutes Per Market",
+          "type": "integer"
+        },
+        "max_open_positions": {
+          "default": 5,
+          "minimum": 1,
+          "title": "Max Open Positions",
+          "type": "integer"
+        },
+        "max_positions_per_event": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Max Positions Per Event",
+          "type": "integer"
+        },
+        "max_total_exposure_pct": {
+          "default": 0.25,
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Max Total Exposure Pct",
+          "type": "number"
+        }
+      },
+      "title": "Constraints",
+      "type": "object"
+    },
+    "Entry": {
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Condition"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "All"
+        },
+        "any": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Condition"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Any"
+        },
+        "random": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RandomEntry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "Entry",
+      "type": "object"
+    },
+    "Exit": {
+      "additionalProperties": false,
+      "description": "Evaluated in list order; the first rule that fires names the exit reason. An empty list\nmeans hold until settlement (or the end of the backtest).",
+      "properties": {
+        "any": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "MAX_HOLD_MINUTES": "#/$defs/MaxHold",
+                "PRICE_ABOVE": "#/$defs/PriceAbove",
+                "PRICE_BELOW": "#/$defs/PriceBelow",
+                "RULE": "#/$defs/RuleExit",
+                "STOP_LOSS_PCT": "#/$defs/StopLoss",
+                "TAKE_PROFIT_PCT": "#/$defs/TakeProfit"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/TakeProfit"
+              },
+              {
+                "$ref": "#/$defs/StopLoss"
+              },
+              {
+                "$ref": "#/$defs/PriceAbove"
+              },
+              {
+                "$ref": "#/$defs/PriceBelow"
+              },
+              {
+                "$ref": "#/$defs/MaxHold"
+              },
+              {
+                "$ref": "#/$defs/RuleExit"
+              }
+            ]
+          },
+          "title": "Any",
+          "type": "array"
+        }
+      },
+      "title": "Exit",
+      "type": "object"
+    },
+    "MaxHold": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "MAX_HOLD_MINUTES",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "exclusiveMinimum": 0,
+          "title": "Value",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "MaxHold",
+      "type": "object"
+    },
+    "PriceAbove": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "PRICE_ABOVE",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "PriceAbove",
+      "type": "object"
+    },
+    "PriceBelow": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "PRICE_BELOW",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "PriceBelow",
+      "type": "object"
+    },
+    "RandomEntry": {
+      "additionalProperties": false,
+      "description": "Null-hypothesis entries (PRD §8.3): each eligible bar enters with this probability.",
+      "properties": {
+        "probability_per_bar": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Probability Per Bar",
+          "type": "number"
+        }
+      },
+      "required": [
+        "probability_per_bar"
+      ],
+      "title": "RandomEntry",
+      "type": "object"
+    },
+    "RuleExit": {
+      "additionalProperties": false,
+      "properties": {
+        "condition": {
+          "$ref": "#/$defs/Condition"
+        },
+        "type": {
+          "const": "RULE",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "condition"
+      ],
+      "title": "RuleExit",
+      "type": "object"
+    },
+    "Side": {
+      "description": "§3.3 — there is no shorting; short YES is expressed as BUY_NO.",
+      "enum": [
+        "BUY_YES",
+        "BUY_NO"
+      ],
+      "title": "Side",
+      "type": "string"
+    },
+    "Sizing": {
+      "additionalProperties": false,
+      "properties": {
+        "max_notional_per_trade": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Notional Per Trade"
+        },
+        "mode": {
+          "$ref": "#/$defs/SizingMode"
+        },
+        "value": {
+          "exclusiveMinimum": 0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "mode",
+        "value"
+      ],
+      "title": "Sizing",
+      "type": "object"
+    },
+    "SizingMode": {
+      "description": "§10.3.",
+      "enum": [
+        "FIXED_CASH",
+        "PCT_OF_EQUITY",
+        "PCT_OF_INITIAL",
+        "FIXED_SHARES"
+      ],
+      "title": "SizingMode",
+      "type": "string"
+    },
+    "StopLoss": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "STOP_LOSS_PCT",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "StopLoss",
+      "type": "object"
+    },
+    "TakeProfit": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "TAKE_PROFIT_PCT",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "exclusiveMinimum": 0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "TakeProfit",
+      "type": "object"
+    },
+    "Universe": {
+      "additionalProperties": false,
+      "properties": {
+        "categories": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Categories"
+        },
+        "min_time_to_resolution_minutes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Minutes until the *scheduled* end date.",
+          "title": "Min Time To Resolution Minutes"
+        },
+        "min_volume_asof": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cumulative traded notional (USDC) up to the bar.",
+          "title": "Min Volume Asof"
+        },
+        "side": {
+          "$ref": "#/$defs/Side",
+          "default": "BUY_YES"
+        }
+      },
+      "title": "Universe",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "constraints": {
+      "$ref": "#/$defs/Constraints"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "dsl_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Dsl Version",
+      "type": "integer"
+    },
+    "entry": {
+      "$ref": "#/$defs/Entry"
+    },
+    "exit": {
+      "$ref": "#/$defs/Exit"
+    },
+    "name": {
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "sizing": {
+      "$ref": "#/$defs/Sizing"
+    },
+    "universe": {
+      "$ref": "#/$defs/Universe"
+    }
+  },
+  "required": [
+    "name",
+    "entry",
+    "sizing"
+  ],
+  "title": "StrategyDSL",
+  "type": "object"
+}

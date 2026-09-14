@@ -1,0 +1,115 @@
+{
+  "name": "partial_fill",
+  "asserts": "Participation cap binds, PARTIAL, correct share count",
+  "derivation": [
+    "TRADE_PRINT, 10% participation, partial fills allowed, 1 tick slippage, no fees. YES bar price 0.42 at m0-m1.",
+    "Prints in the execution bar m1: 100 @ 0.40 and 200 @ 0.43 -> volume 300, VWAP (40 + 86) / 300 = 0.42, cap = 0.10 x 300 = 30 shares.",
+    "Fill price 0.42 + 0.01 = 0.43. FIXED_CASH 20 wants floor(20 / 0.43) = 46.51 shares (exposure headroom 25 allows 58.13).",
+    "Liquidity cap binds: 30 shares, status PARTIAL. Cost 30 x 0.43 = 12.90 -> cash 87.10.",
+    "End: valued at mark 0.42 -> +12.60 -> cash 99.70. gross = 30 x (0.42 - 0.42) = 0; slippage 30 x 0.01 = 0.30; net -0.30."
+  ],
+  "start": "2026-01-01T00:00:00Z",
+  "end_minute": null,
+  "markets": [
+    {
+      "condition_id": "m1",
+      "event_id": "ev-m1",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "UNRESOLVED",
+      "resolved_minute": null,
+      "closed_minute": null,
+      "tokens": [
+        {
+          "clob_token_id": "yes1",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "no1",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ]
+    }
+  ],
+  "fee_schedules": [],
+  "request": {
+    "strategy": {
+      "name": "golden",
+      "universe": {
+        "side": "BUY_YES"
+      },
+      "entry": {
+        "all": [
+          {
+            "feature": "price",
+            "op": "lte",
+            "value": 0.45
+          }
+        ]
+      },
+      "sizing": {
+        "mode": "FIXED_CASH",
+        "value": 20
+      },
+      "exit": {
+        "any": []
+      },
+      "constraints": {
+        "max_open_positions": 5,
+        "max_total_exposure_pct": 0.25,
+        "max_positions_per_event": 1,
+        "cooldown_minutes_per_market": 0,
+        "allow_reentry_same_market": false
+      }
+    },
+    "starting_capital": "100",
+    "seed": 7,
+    "bar_interval_minutes": 1,
+    "decision_lag_bars": 1,
+    "execution": {
+      "model": "TRADE_PRINT",
+      "slippage_ticks": 1,
+      "liquidity_participation": 0.1,
+      "partial_fill_policy": "ALLOW"
+    },
+    "fees": {
+      "mode": "FIXED",
+      "fixed_rate": "0"
+    },
+    "max_stale_minutes": 60
+  },
+  "expected": {
+    "cash_end": "99.70",
+    "equity_end": "99.70",
+    "trades": [
+      {
+        "seq": 1,
+        "fill_status": "PARTIAL",
+        "entry_minute": 1,
+        "entry_ref_price": "0.42",
+        "entry_price": "0.43",
+        "shares": "30",
+        "size_binding_constraint": "liquidity",
+        "exit_reason": "END_OF_BACKTEST",
+        "exit_price": "0.42",
+        "gross_pnl": "0",
+        "slippage_cost": "0.30",
+        "net_pnl": "-0.30"
+      }
+    ],
+    "data_quality": {
+      "signals_generated": 1,
+      "signals_filled": 1
+    }
+  }
+}

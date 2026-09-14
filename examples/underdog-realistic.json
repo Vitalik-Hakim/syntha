@@ -1,0 +1,97 @@
+{
+  "strategy": {
+    "dsl_version": 1,
+    "name": "Underdog Probability Reversion",
+    "description": "Example strategy \u2014 not a trading recommendation. Buys cheap outcomes on a short-term upswing with some traded volume.",
+    "universe": {
+      "side": "BUY_YES",
+      "categories": [
+        "sports"
+      ],
+      "min_volume_asof": 10000,
+      "min_time_to_resolution_minutes": 30
+    },
+    "entry": {
+      "all": [
+        {
+          "feature": "price",
+          "op": "lte",
+          "value": 0.2
+        },
+        {
+          "feature": "price_change_pct",
+          "params": {
+            "lookback_minutes": 10
+          },
+          "op": "gte",
+          "value": 0.03
+        },
+        {
+          "feature": "traded_volume",
+          "params": {
+            "lookback_minutes": 10
+          },
+          "op": "gte",
+          "value": 50
+        }
+      ]
+    },
+    "sizing": {
+      "mode": "PCT_OF_EQUITY",
+      "value": 0.05,
+      "max_notional_per_trade": 25.0
+    },
+    "exit": {
+      "any": [
+        {
+          "type": "TAKE_PROFIT_PCT",
+          "value": 0.3
+        },
+        {
+          "type": "STOP_LOSS_PCT",
+          "value": 0.2
+        },
+        {
+          "type": "PRICE_ABOVE",
+          "value": 0.3
+        },
+        {
+          "type": "MAX_HOLD_MINUTES",
+          "value": 120
+        },
+        {
+          "type": "RULE",
+          "condition": {
+            "feature": "spread_proxy",
+            "op": "gt",
+            "value": 0.05
+          }
+        }
+      ]
+    },
+    "constraints": {
+      "max_open_positions": 5,
+      "max_total_exposure_pct": 0.25,
+      "max_positions_per_event": 1,
+      "cooldown_minutes_per_market": 60,
+      "allow_reentry_same_market": true
+    }
+  },
+  "dataset": {
+    "collection": "july-2026-stratified-600"
+  },
+  "starting_capital": "100",
+  "seed": 1,
+  "bar_interval_minutes": 1,
+  "decision_lag_bars": 1,
+  "execution": {
+    "model": "TRADE_PRINT",
+    "slippage_ticks": 1,
+    "liquidity_participation": 0.1,
+    "partial_fill_policy": "ALLOW"
+  },
+  "fees": {
+    "mode": "HISTORICAL"
+  },
+  "max_stale_minutes": 60
+}

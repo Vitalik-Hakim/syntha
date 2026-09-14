@@ -1,0 +1,111 @@
+{
+  "name": "exposure_capped",
+  "asserts": "25% cap binds; size reduced and reason recorded",
+  "derivation": [
+    "One YES token at 0.50 (m0-m2), FIXED_CASH 40, exposure cap 25%, no slippage or fees.",
+    "Signal m0, execute m1: requested 40 -> 80 shares; exposure headroom 0.25 x 100 - 0 = 25 -> floor(25 / 0.50) = 50 shares.",
+    "Binding constraint max_total_exposure_pct. Cash 100 - 25 = 75.",
+    "End: valued at 0.50 -> cash 100."
+  ],
+  "start": "2026-01-01T00:00:00Z",
+  "end_minute": null,
+  "markets": [
+    {
+      "condition_id": "m1",
+      "event_id": "ev-m1",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "UNRESOLVED",
+      "resolved_minute": null,
+      "closed_minute": null,
+      "tokens": [
+        {
+          "clob_token_id": "yes1",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "no1",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ]
+    }
+  ],
+  "fee_schedules": [],
+  "request": {
+    "strategy": {
+      "name": "golden",
+      "universe": {
+        "side": "BUY_YES"
+      },
+      "entry": {
+        "all": [
+          {
+            "feature": "price",
+            "op": "lte",
+            "value": 0.5
+          }
+        ]
+      },
+      "sizing": {
+        "mode": "FIXED_CASH",
+        "value": 40
+      },
+      "exit": {
+        "any": []
+      },
+      "constraints": {
+        "max_open_positions": 5,
+        "max_total_exposure_pct": 0.25,
+        "max_positions_per_event": 1,
+        "cooldown_minutes_per_market": 0,
+        "allow_reentry_same_market": false
+      }
+    },
+    "starting_capital": "100",
+    "seed": 7,
+    "bar_interval_minutes": 1,
+    "decision_lag_bars": 1,
+    "execution": {
+      "model": "LAST_PRICE",
+      "slippage_ticks": 0,
+      "liquidity_participation": null
+    },
+    "fees": {
+      "mode": "FIXED",
+      "fixed_rate": "0"
+    },
+    "max_stale_minutes": 60
+  },
+  "expected": {
+    "cash_end": "100",
+    "equity_end": "100",
+    "trades": [
+      {
+        "seq": 1,
+        "fill_status": "FILLED",
+        "shares": "50",
+        "notional": "25",
+        "entry_price": "0.50",
+        "size_binding_constraint": "max_total_exposure_pct",
+        "requested_notional": "40",
+        "final_notional": "25",
+        "exit_reason": "END_OF_BACKTEST",
+        "net_pnl": "0"
+      }
+    ],
+    "data_quality": {
+      "signals_generated": 1,
+      "signals_filled": 1
+    }
+  }
+}

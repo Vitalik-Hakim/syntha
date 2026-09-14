@@ -329,3 +329,6 @@ Only `orderMinSize` exists in Gamma and CLOB. Single column kept.
 | Mid-life fee activation follows the `feeType` rollout date | changelog + `feeSchedule` observations | Medium (inference) |
 | `/v2/resolutions` `last_update_timestamp` is the resolution time for resolved rows | spec: "Latest lifecycle change" | Medium-high |
 | v1 bars are mid-like samples | live reconciliation on one market | Medium (one market; M1 reconciliation report widens the sample) |
+| Closing a whole position is allowed below the market's minimum order size | Not documented; the minimum is applied to entries only | Low. Revisit if it matters (a sub-minimum position could otherwise never be sold) |
+| TRADE_PRINT liquidity = all taker prints in the bar, both sides | PRD §11.3 "Σ print size in bar" | Medium: a BUY consumes ask liquidity, so taker-BUY prints alone would be stricter |
+| Open positions at the end are worth their last mark, with no exit costs | Engine convention (`END_OF_BACKTEST`) | Stated in every run's data-quality assumptions |

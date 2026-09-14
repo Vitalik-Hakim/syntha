@@ -1,0 +1,3 @@
+clob_token_id,minute,second,price,size,side
+yes1,1,5,0.40,100,BUY
+yes1,1,30,0.43,200,BUY

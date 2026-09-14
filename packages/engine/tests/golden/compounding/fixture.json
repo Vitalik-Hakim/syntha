@@ -1,0 +1,185 @@
+{
+  "name": "compounding",
+  "asserts": "5% of equity across 3 trades matches hand-computed 5.00, 5.25, ...",
+  "derivation": [
+    "Three sequential markets, each a YES token at 0.50 for three minutes, each resolving YES one minute after its last bar.",
+    "PCT_OF_EQUITY 5%, one position at a time, exposure cap 100%, no costs.",
+    "Trade 1: signal m0, execute m1 at equity 100 -> 5.00 -> 10.00 shares; settles YES at m3 -> cash 95 + 10 = 105.",
+    "Trade 2: market 2 signals m3, executes m4 at equity 105 -> 5.25 -> 10.50 shares; settles m6 -> 99.75 + 10.50 = 110.25.",
+    "Trade 3: signals m6, executes m7 at equity 110.25 -> 5.5125 -> floor(11.025, 2dp) = 11.02 shares = 5.51; settles m9 -> 104.74 + 11.02 = 115.76."
+  ],
+  "start": "2026-01-01T00:00:00Z",
+  "end_minute": 9,
+  "markets": [
+    {
+      "condition_id": "M1",
+      "event_id": "ev-M1",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "YES",
+      "resolved_minute": 3,
+      "closed_minute": null,
+      "tokens": [
+        {
+          "clob_token_id": "y1",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "n1",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ]
+    },
+    {
+      "condition_id": "M2",
+      "event_id": "ev-M2",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "YES",
+      "resolved_minute": 6,
+      "closed_minute": null,
+      "tokens": [
+        {
+          "clob_token_id": "y2",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "n2",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ]
+    },
+    {
+      "condition_id": "M3",
+      "event_id": "ev-M3",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "YES",
+      "resolved_minute": 9,
+      "closed_minute": null,
+      "tokens": [
+        {
+          "clob_token_id": "y3",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "n3",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ]
+    }
+  ],
+  "fee_schedules": [],
+  "request": {
+    "strategy": {
+      "name": "golden",
+      "universe": {
+        "side": "BUY_YES"
+      },
+      "entry": {
+        "all": [
+          {
+            "feature": "price",
+            "op": "lte",
+            "value": 0.5
+          }
+        ]
+      },
+      "sizing": {
+        "mode": "PCT_OF_EQUITY",
+        "value": 0.05
+      },
+      "exit": {
+        "any": []
+      },
+      "constraints": {
+        "max_open_positions": 1,
+        "max_total_exposure_pct": 1.0,
+        "max_positions_per_event": 1,
+        "cooldown_minutes_per_market": 0,
+        "allow_reentry_same_market": false
+      }
+    },
+    "starting_capital": "100",
+    "seed": 7,
+    "bar_interval_minutes": 1,
+    "decision_lag_bars": 1,
+    "execution": {
+      "model": "LAST_PRICE",
+      "slippage_ticks": 0,
+      "liquidity_participation": null
+    },
+    "fees": {
+      "mode": "FIXED",
+      "fixed_rate": "0"
+    },
+    "max_stale_minutes": 60
+  },
+  "expected": {
+    "cash_end": "115.76",
+    "equity_end": "115.76",
+    "trades": [
+      {
+        "seq": 1,
+        "entry_minute": 1,
+        "requested_notional": "5.00",
+        "notional": "5.00",
+        "shares": "10",
+        "exit_minute": 3,
+        "net_pnl": "5.00"
+      },
+      {
+        "seq": 2,
+        "entry_minute": 4,
+        "requested_notional": "5.25",
+        "notional": "5.25",
+        "shares": "10.50",
+        "exit_minute": 6,
+        "net_pnl": "5.25"
+      },
+      {
+        "seq": 3,
+        "entry_minute": 7,
+        "requested_notional": "5.5125",
+        "notional": "5.51",
+        "shares": "11.02",
+        "exit_minute": 9,
+        "net_pnl": "5.51"
+      }
+    ],
+    "data_quality": {
+      "signals_generated": 3,
+      "signals_filled": 3
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "dsl_version": 1,
+  "name": "Random Entry",
+  "description": "Example strategy — not a trading recommendation. The null hypothesis: same universe, sizing and constraints as the strategy under test, with entries drawn from a seeded RNG. Set probability_per_bar to the compared strategy's observed entry rate.",
+  "universe": {"side": "BUY_YES"},
+  "entry": {"random": {"probability_per_bar": 0.001}},
+  "sizing": {"mode": "PCT_OF_EQUITY", "value": 0.05, "max_notional_per_trade": 25.0},
+  "exit": {"any": [{"type": "MAX_HOLD_MINUTES", "value": 120}]},
+  "constraints": {
+    "max_open_positions": 5,
+    "max_total_exposure_pct": 0.25,
+    "max_positions_per_event": 1,
+    "cooldown_minutes_per_market": 60,
+    "allow_reentry_same_market": true
+  }
+}
