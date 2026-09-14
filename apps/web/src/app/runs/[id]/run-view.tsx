@@ -105,6 +105,7 @@ function RunHeader({ run }: { run: RunDetail }) {
           {run.status === "DONE" ? (
             <>
               <Link className="text-accent hover:underline" href={`/runs/${run.id}/trades`}>Trade blotter →</Link>
+              <Link className="text-ink-muted hover:text-ink" href={`/runs/${run.id}/near-misses`}>Near misses</Link>
               <a className="text-ink-muted hover:text-ink" href={`/api/backtests/${run.id}/export.csv`}>CSV</a>
               <a className="text-ink-muted hover:text-ink" href={`/api/backtests/${run.id}/export.json`}>JSON</a>
             </>
@@ -217,8 +218,8 @@ function Results({ run, metrics: m, dq, equity }: { run: RunDetail; metrics: Met
       </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
-        <Section title="Exit reasons">
-          <Bars data={m.exit_reasons ?? {}} empty="No closed trades." />
+        <Section title="Exit reasons" aside={<span className="text-[11px] text-ink-faint">executed trades</span>}>
+          <ExitBreakdown runId={run.id} rows={m.exit_reason_breakdown} fallback={m.exit_reasons ?? {}} />
         </Section>
         <Section title="Why signals didn't fill">
           <Bars data={dq.signals_unexecutable_reasons ?? {}} empty="Every signal filled." />
@@ -230,8 +231,50 @@ function Results({ run, metrics: m, dq, equity }: { run: RunDetail; metrics: Met
         </Section>
       </div>
 
-      <DataQuality dq={dq} />
+      <DataQuality dq={dq} runId={run.id} />
       <Manifest run={run} />
+    </div>
+  );
+}
+
+type ExitRow = {
+  reason: string; trades: number; share: number; win_rate: number; net_pnl: number; fees: number; slippage: number;
+  mean_return_pct: number; median_holding_seconds: number | null;
+};
+
+function ExitBreakdown({ runId, rows, fallback }: { runId: string; rows: ExitRow[] | undefined; fallback: Record<string, number> }) {
+  if (!rows) return <Bars data={fallback} empty="No closed trades." />;
+  if (!rows.length) return <p className="text-sm text-ink-faint">No executed trades.</p>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-xs">
+        <thead className="text-ink-faint">
+          <tr>
+            <th className="py-1 font-medium">Reason</th>
+            <th className="py-1 text-right font-medium">Trades</th>
+            <th className="py-1 text-right font-medium">Win rate</th>
+            <th className="py-1 text-right font-medium">Net P&L</th>
+            <th className="py-1 text-right font-medium" title="Fees + slippage">Costs</th>
+            <th className="py-1 text-right font-medium">Mean return</th>
+            <th className="py-1 text-right font-medium">Median hold</th>
+          </tr>
+        </thead>
+        <tbody className="num">
+          {rows.map((r) => (
+            <tr key={r.reason} className="border-t border-line">
+              <td className="py-1.5 font-mono">
+                <Link className="text-ink hover:text-accent hover:underline" href={`/runs/${runId}/trades?exit_reason=${encodeURIComponent(r.reason)}`}>{r.reason}</Link>
+              </td>
+              <td className="py-1.5 text-right text-ink">{count(r.trades)} <span className="text-ink-faint">{pct(r.share, { digits: 0 })}</span></td>
+              <td className="py-1.5 text-right text-ink">{pct(r.win_rate, { digits: 0 })}</td>
+              <td className="py-1.5 text-right"><Signed value={r.net_pnl}>{usd(r.net_pnl, { signed: true })}</Signed></td>
+              <td className="py-1.5 text-right text-ink-muted">{usd(-(r.fees + r.slippage), { signed: true })}</td>
+              <td className="py-1.5 text-right"><Signed value={r.mean_return_pct}>{pct(r.mean_return_pct, { signed: true, digits: 1 })}</Signed></td>
+              <td className="py-1.5 text-right text-ink-muted">{duration(r.median_holding_seconds)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -271,7 +314,7 @@ function Bars({ data, empty }: { data: Record<string, number>; empty: string }) 
   );
 }
 
-function DataQuality({ dq }: { dq: DQ }) {
+function DataQuality({ dq, runId }: { dq: DQ; runId: string }) {
   const funnel: Record<string, number> = dq.entry_funnel ?? {};
   return (
     <Section title="Data quality" aside={<span className="text-[11px] text-ink-faint">shown on every result</span>}>
@@ -302,6 +345,16 @@ function DataQuality({ dq }: { dq: DQ }) {
               </li>
             ))}
           </ul>
+          {dq.near_misses?.available ? (
+            <p className="mt-3 text-xs text-ink-muted">
+              Near misses kept:{" "}
+              <span className="num text-ink">
+                {count(dq.near_misses.kept?.RULES_FAILED ?? 0)} rules failed · {count(dq.near_misses.kept?.BLOCKED_BY_UNIVERSE ?? 0)} filter-blocked ·{" "}
+                {count(dq.near_misses.kept?.BLOCKED_BY_CONSTRAINT ?? 0)} constraint-blocked
+              </span>{" "}
+              <Link href={`/runs/${runId}/near-misses`} className="text-accent hover:underline">inspect →</Link>
+            </p>
+          ) : null}
         </div>
         <div className="space-y-2 text-xs text-ink-muted">
           <Row label="Fee mode" value={dq.fee_mode} />

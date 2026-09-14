@@ -20,6 +20,11 @@ export type TradeDetail = S["TradeDetail"];
 export type ValidationResult = S["ValidationResult"];
 export type StrategyDSL = S["StrategyDSL"];
 export type RunList = S["RunList"];
+export type Replay = S["Replay"];
+export type ReplayMarker = S["ReplayMarker"];
+export type NearMissPage = S["NearMissPage"];
+export type NearMissRow = S["NearMissRow"];
+export type NearMissDetail = S["NearMissDetail"];
 
 export class ApiError extends Error {
   constructor(

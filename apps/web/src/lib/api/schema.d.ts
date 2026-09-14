@@ -90,6 +90,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/backtests/{run_id}/near-misses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Near Misses
+         * @description Bars where the strategy did not trade (PRD §13.2). `nearest` lists rule failures closest to
+         *     firing first, then blocked bars in time order.
+         */
+        get: operations["near_misses_api_backtests__run_id__near_misses_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/backtests/{run_id}/near-misses/{seq}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Near Miss */
+        get: operations["near_miss_api_backtests__run_id__near_misses__seq__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/backtests/{run_id}/near-misses/{seq}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Near Miss Replay */
+        get: operations["near_miss_replay_api_backtests__run_id__near_misses__seq__replay_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/backtests/{run_id}/stream": {
         parameters: {
             query?: never;
@@ -136,6 +191,26 @@ export interface paths {
         };
         /** Trade */
         get: operations["trade_api_backtests__run_id__trades__seq__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/backtests/{run_id}/trades/{seq}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Trade Replay
+         * @description Price, prints and decision geometry around one trade (PRD §13.3).
+         */
+        get: operations["trade_replay_api_backtests__run_id__trades__seq__replay_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -648,6 +723,102 @@ export interface components {
             /** Value */
             value: number;
         };
+        /** NearMissDetail */
+        NearMissDetail: {
+            /** Blocked By */
+            blocked_by: string | null;
+            /** Clob Token Id */
+            clob_token_id: string;
+            /** Condition Id */
+            condition_id: string;
+            /** Failed Clauses */
+            failed_clauses: number;
+            /**
+             * Failing Features
+             * @description Entry-rule features that did not hold
+             */
+            failing_features: string[];
+            /**
+             * Kind
+             * @description RULES_FAILED | BLOCKED_BY_UNIVERSE | BLOCKED_BY_CONSTRAINT
+             */
+            kind: string;
+            /** Question */
+            question: string | null;
+            /**
+             * Score
+             * @description Closeness to firing for RULES_FAILED (lower is nearer): failing clauses plus their mean relative distance. A ranking, not a quantity.
+             */
+            score: number | null;
+            /** Seq */
+            seq: number;
+            /** Trace */
+            trace: {
+                [key: string]: unknown;
+            };
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+        };
+        /** NearMissPage */
+        NearMissPage: {
+            /** Counts By Blocker */
+            counts_by_blocker: {
+                [key: string]: number;
+            };
+            /** Counts By Kind */
+            counts_by_kind: {
+                [key: string]: number;
+            };
+            /** Near Misses */
+            near_misses: components["schemas"]["NearMissRow"][];
+            /** Next Cursor */
+            next_cursor: number | null;
+            /** Run Id */
+            run_id: string;
+            /** Total */
+            total: number;
+        };
+        /**
+         * NearMissRow
+         * @description A bar where the strategy did not trade (PRD §13.2).
+         */
+        NearMissRow: {
+            /** Blocked By */
+            blocked_by: string | null;
+            /** Clob Token Id */
+            clob_token_id: string;
+            /** Condition Id */
+            condition_id: string;
+            /** Failed Clauses */
+            failed_clauses: number;
+            /**
+             * Failing Features
+             * @description Entry-rule features that did not hold
+             */
+            failing_features: string[];
+            /**
+             * Kind
+             * @description RULES_FAILED | BLOCKED_BY_UNIVERSE | BLOCKED_BY_CONSTRAINT
+             */
+            kind: string;
+            /** Question */
+            question: string | null;
+            /**
+             * Score
+             * @description Closeness to firing for RULES_FAILED (lower is nearer): failing clauses plus their mean relative distance. A ranking, not a quantity.
+             */
+            score: number | null;
+            /** Seq */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+        };
         /**
          * PartialFillPolicy
          * @description §11.3.
@@ -708,6 +879,160 @@ export interface components {
              * @enum {string}
              */
             status: "ready" | "degraded";
+        };
+        /**
+         * Replay
+         * @description Everything the replay chart and checklist need (PRD §13.3), from stored traces and data.
+         */
+        Replay: {
+            /**
+             * End
+             * Format: date-time
+             */
+            end: string;
+            /** Levels */
+            levels: components["schemas"]["ReplayLevel"][];
+            /** Markers */
+            markers: components["schemas"]["ReplayMarker"][];
+            market: components["schemas"]["ReplayMarket"];
+            near_miss: components["schemas"]["NearMissDetail"] | null;
+            /** Next Seq */
+            next_seq: number | null;
+            /** Prev Seq */
+            prev_seq: number | null;
+            prices: components["schemas"]["ReplaySeries"];
+            prints: components["schemas"]["ReplayPrints"];
+            /** Run Id */
+            run_id: string;
+            /** Seq */
+            seq: number;
+            /**
+             * Start
+             * Format: date-time
+             */
+            start: string;
+            /**
+             * Subject
+             * @description trade | near_miss
+             */
+            subject: string;
+            trade: components["schemas"]["TradeDetail"] | null;
+            /** Windows */
+            windows: components["schemas"]["ReplayWindow"][];
+        };
+        /** ReplayLevel */
+        ReplayLevel: {
+            /**
+             * Kind
+             * @description TAKE_PROFIT_PCT | STOP_LOSS_PCT | PRICE_ABOVE | PRICE_BELOW | ENTRY_PRICE_RULE
+             */
+            kind: string;
+            /** Label */
+            label: string;
+            /** Price */
+            price: number;
+        };
+        /** ReplayMarker */
+        ReplayMarker: {
+            /**
+             * Kind
+             * @description SIGNAL | ENTRY | ATTEMPT | EXIT_SIGNAL | EXIT_FILL | SETTLE | END_OF_BACKTEST | RESOLVED | NEAR_MISS
+             */
+            kind: string;
+            /** Label */
+            label: string;
+            /** Price */
+            price: number | null;
+            /**
+             * Ref
+             * @description seq of the linked near miss (NEAR_MISS) or trade (ENTRY/ATTEMPT)
+             */
+            ref?: number | null;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+        };
+        /** ReplayMarket */
+        ReplayMarket: {
+            /** Clob Token Id */
+            clob_token_id: string;
+            /** Condition Id */
+            condition_id: string;
+            /**
+             * End Date
+             * @description Scheduled end
+             */
+            end_date: string | null;
+            /** Open Ts */
+            open_ts: string | null;
+            /** Outcome Name */
+            outcome_name: string | null;
+            /** Question */
+            question: string | null;
+            /** Resolution */
+            resolution: string | null;
+            /**
+             * Resolved At
+             * @description Shown after the fact for context; strategies never see it (PRD §5)
+             */
+            resolved_at: string | null;
+            /** Tick Size */
+            tick_size: string | null;
+        };
+        /** ReplayPrints */
+        ReplayPrints: {
+            /** Price */
+            price: number[];
+            /** Side */
+            side: string[];
+            /** Size */
+            size: number[];
+            /** Truncated */
+            truncated: boolean;
+            /** Ts */
+            ts: number[];
+        };
+        /**
+         * ReplaySeries
+         * @description Raw 1-minute price samples for the token, epoch seconds. The first point may precede the
+         *     window: it is the price in force when the window opens.
+         */
+        ReplaySeries: {
+            /** Downsampled */
+            downsampled: boolean;
+            /** Price */
+            price: number[];
+            /** Total Points */
+            total_points: number;
+            /** Ts */
+            ts: number[];
+        };
+        /**
+         * ReplayWindow
+         * @description The time span a lookback feature read at the decision bar.
+         */
+        ReplayWindow: {
+            /**
+             * End
+             * Format: date-time
+             */
+            end: string;
+            /** Label */
+            label: string;
+            /** Passed */
+            passed: boolean | null;
+            /**
+             * Side
+             * @description entry | exit
+             */
+            side: string;
+            /**
+             * Start
+             * Format: date-time
+             */
+            start: string;
         };
         /** RuleExit */
         RuleExit: {
@@ -1283,6 +1608,109 @@ export interface operations {
             };
         };
     };
+    near_misses_api_backtests__run_id__near_misses_get: {
+        parameters: {
+            query?: {
+                kind?: string | null;
+                blocked_by?: string | null;
+                condition_id?: string | null;
+                order?: string;
+                /** @description offset from a previous page */
+                cursor?: number | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NearMissPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    near_miss_api_backtests__run_id__near_misses__seq__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NearMissDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    near_miss_replay_api_backtests__run_id__near_misses__seq__replay_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Replay"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     stream_backtest_api_backtests__run_id__stream_get: {
         parameters: {
             query?: never;
@@ -1369,6 +1797,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TradeDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trade_replay_api_backtests__run_id__trades__seq__replay_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Replay"];
                 };
             };
             /** @description Validation Error */

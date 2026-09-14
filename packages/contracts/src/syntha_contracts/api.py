@@ -168,3 +168,117 @@ class TradePage(BaseModel):
     next_cursor: int | None
     total: int
     counts_by_status: dict[str, int]
+
+
+class NearMissRow(BaseModel):
+    """A bar where the strategy did not trade (PRD §13.2)."""
+
+    seq: int
+    condition_id: str
+    clob_token_id: str
+    ts: datetime
+    kind: str = Field(description="RULES_FAILED | BLOCKED_BY_UNIVERSE | BLOCKED_BY_CONSTRAINT")
+    score: float | None = Field(
+        description="Closeness to firing for RULES_FAILED (lower is nearer): failing clauses plus "
+        "their mean relative distance. A ranking, not a quantity."
+    )
+    failed_clauses: int
+    blocked_by: str | None
+    question: str | None
+    failing_features: list[str] = Field(description="Entry-rule features that did not hold")
+
+
+class NearMissDetail(NearMissRow):
+    trace: dict[str, Any]
+
+
+class NearMissPage(BaseModel):
+    run_id: str
+    near_misses: list[NearMissRow]
+    next_cursor: int | None
+    total: int
+    counts_by_kind: dict[str, int]
+    counts_by_blocker: dict[str, int]
+
+
+class ReplayMarket(BaseModel):
+    condition_id: str
+    clob_token_id: str
+    question: str | None
+    outcome_name: str | None
+    tick_size: str | None
+    open_ts: datetime | None
+    end_date: datetime | None = Field(description="Scheduled end")
+    resolved_at: datetime | None = Field(
+        description="Shown after the fact for context; strategies never see it (PRD §5)"
+    )
+    resolution: str | None
+
+
+class ReplaySeries(BaseModel):
+    """Raw 1-minute price samples for the token, epoch seconds. The first point may precede the
+    window: it is the price in force when the window opens."""
+
+    ts: list[int]
+    price: list[float]
+    total_points: int
+    downsampled: bool
+
+
+class ReplayPrints(BaseModel):
+    ts: list[int]
+    price: list[float]
+    size: list[float]
+    side: list[str]
+    truncated: bool
+
+
+class ReplayMarker(BaseModel):
+    ts: datetime
+    kind: str = Field(
+        description="SIGNAL | ENTRY | ATTEMPT | EXIT_SIGNAL | EXIT_FILL | SETTLE | "
+        "END_OF_BACKTEST | RESOLVED | NEAR_MISS"
+    )
+    price: float | None
+    label: str
+    ref: int | None = Field(
+        default=None, description="seq of the linked near miss (NEAR_MISS) or trade (ENTRY/ATTEMPT)"
+    )
+
+
+class ReplayWindow(BaseModel):
+    """The time span a lookback feature read at the decision bar."""
+
+    label: str
+    start: datetime
+    end: datetime
+    passed: bool | None
+    side: str = Field(description="entry | exit")
+
+
+class ReplayLevel(BaseModel):
+    kind: str = Field(
+        description="TAKE_PROFIT_PCT | STOP_LOSS_PCT | PRICE_ABOVE | PRICE_BELOW | ENTRY_PRICE_RULE"
+    )
+    price: float
+    label: str
+
+
+class Replay(BaseModel):
+    """Everything the replay chart and checklist need (PRD §13.3), from stored traces and data."""
+
+    run_id: str
+    subject: str = Field(description="trade | near_miss")
+    seq: int
+    market: ReplayMarket
+    start: datetime
+    end: datetime
+    prices: ReplaySeries
+    prints: ReplayPrints
+    markers: list[ReplayMarker]
+    windows: list[ReplayWindow]
+    levels: list[ReplayLevel]
+    trade: TradeDetail | None
+    near_miss: NearMissDetail | None
+    prev_seq: int | None
+    next_seq: int | None

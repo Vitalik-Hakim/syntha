@@ -1,5 +1,5 @@
 """Backtest runs (PRD §14). Runs are immutable; every number returned comes from backtest_runs,
-bt_trades or bt_equity (PRD §0 rule 3)."""
+bt_trades, bt_equity or bt_near_misses (PRD §0 rule 3)."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
+from syntha_api import replay as R
 from syntha_api.deps import ConnDep, SettingsDep
 from syntha_api.lttb import equity_indices
 from syntha_api.settings import Settings
@@ -25,6 +26,11 @@ from syntha_contracts.api import (
     CreateBacktestResponse,
     EquityPoint,
     EquitySeries,
+    NearMissDetail,
+    NearMissPage,
+    NearMissRow,
+    Replay,
+    ReplayMarker,
     RunDetail,
     RunList,
     RunProgress,
@@ -321,6 +327,10 @@ def trades(
 
 @router.get("/{run_id}/trades/{seq}")
 def trade(run_id: str, seq: int, conn: ConnDep) -> TradeDetail:
+    return _trade_detail(conn, run_id, seq)
+
+
+def _trade_detail(conn: psycopg.Connection[Any], run_id: str, seq: int) -> TradeDetail:
     row = conn.execute(
         f"SELECT {TRADE_COLUMNS}, t.entry_rule_trace, t.exit_rule_trace FROM bt_trades t "
         "LEFT JOIN markets m ON m.condition_id = t.condition_id WHERE t.run_id = %s AND t.seq = %s",
@@ -329,6 +339,228 @@ def trade(run_id: str, seq: int, conn: ConnDep) -> TradeDetail:
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"trade {seq} not found in {run_id}")
     return TradeDetail(**_trade_row(row), entry_rule_trace=row[25], exit_rule_trace=row[26])
+
+
+def _neighbours(
+    conn: psycopg.Connection[Any], table: str, run_id: str, seq: int
+) -> tuple[int | None, int | None]:
+    row = conn.execute(
+        f"SELECT (SELECT max(seq) FROM {table} WHERE run_id = %(r)s AND seq < %(s)s), "
+        f"(SELECT min(seq) FROM {table} WHERE run_id = %(r)s AND seq > %(s)s)",
+        {"r": run_id, "s": seq},
+    ).fetchone()
+    return (row[0], row[1]) if row else (None, None)
+
+
+@router.get("/{run_id}/trades/{seq}/replay")
+def trade_replay(run_id: str, seq: int, conn: ConnDep) -> Replay:
+    """Price, prints and decision geometry around one trade (PRD §13.3)."""
+    detail = _trade_detail(conn, run_id, seq)
+    g = R.trade_geometry(detail)
+    start, end = g.span()
+    context = conn.execute(
+        "SELECT seq, ts, kind, blocked_by, failed_clauses FROM bt_near_misses WHERE run_id = %s "
+        "AND clob_token_id = %s AND ts >= %s AND ts <= %s ORDER BY ts",
+        (run_id, detail.clob_token_id, start, end),
+    ).fetchall()
+    markers = g.markers + [
+        ReplayMarker(
+            ts=ts,
+            kind="NEAR_MISS",
+            price=None,
+            label=f"Near miss #{nm_seq}: {R.why_not(blocked, failed)}",
+            ref=nm_seq,
+        )
+        for nm_seq, ts, _kind, blocked, failed in context
+    ]
+    return _replay(
+        conn,
+        run_id,
+        "trade",
+        seq,
+        detail.condition_id,
+        detail.clob_token_id,
+        g,
+        markers,
+        detail,
+        None,
+    )
+
+
+def _replay(
+    conn: psycopg.Connection[Any],
+    run_id: str,
+    subject: str,
+    seq: int,
+    condition_id: str,
+    token: str,
+    g: R.Geometry,
+    markers: list[ReplayMarker],
+    trade_detail: TradeDetail | None,
+    near_miss_detail: NearMissDetail | None,
+) -> Replay:
+    start, end = g.span()
+    info = R.market(conn, condition_id, token)
+    if info.resolved_at is not None and start <= info.resolved_at <= end:
+        markers = [
+            *markers,
+            ReplayMarker(
+                ts=info.resolved_at,
+                kind="RESOLVED",
+                price=None,
+                label=f"Resolved {info.resolution}",
+            ),
+        ]
+    prices, prints = R.series(conn, token, start, end)
+    prev_seq, next_seq = _neighbours(
+        conn, "bt_trades" if subject == "trade" else "bt_near_misses", run_id, seq
+    )
+    return Replay(
+        run_id=run_id,
+        subject=subject,
+        seq=seq,
+        market=info,
+        start=start,
+        end=end,
+        prices=prices,
+        prints=prints,
+        markers=sorted(markers, key=lambda m: m.ts),
+        windows=g.windows,
+        levels=g.levels,
+        trade=trade_detail,
+        near_miss=near_miss_detail,
+        prev_seq=prev_seq,
+        next_seq=next_seq,
+    )
+
+
+NEAR_MISS_COLUMNS = """n.seq, n.condition_id, n.clob_token_id, n.ts, n.kind, n.score, n.failed_clauses,
+    n.blocked_by, m.question,
+    ARRAY(SELECT c->>'feature' FROM jsonb_array_elements(n.trace->'clauses') c
+          WHERE NOT (c->>'passed')::boolean)"""
+
+
+def _near_miss_row(r: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "seq": r[0],
+        "condition_id": r[1],
+        "clob_token_id": r[2],
+        "ts": r[3],
+        "kind": r[4],
+        "score": None if r[5] is None else float(r[5]),
+        "failed_clauses": r[6],
+        "blocked_by": r[7],
+        "question": r[8],
+        "failing_features": list(r[9] or []),
+    }
+
+
+@router.get("/{run_id}/near-misses")
+def near_misses(
+    run_id: str,
+    conn: ConnDep,
+    kind: str | None = None,
+    blocked_by: str | None = None,
+    condition_id: str | None = None,
+    order: Annotated[str, Query(pattern="^(nearest|time)$")] = "nearest",
+    cursor: Annotated[int | None, Query(ge=0, description="offset from a previous page")] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> NearMissPage:
+    """Bars where the strategy did not trade (PRD §13.2). `nearest` lists rule failures closest to
+    firing first, then blocked bars in time order."""
+    _fetch_run(conn, run_id)
+    where = ["n.run_id = %(run)s"]
+    params: dict[str, Any] = {"run": run_id, "limit": limit + 1, "offset": cursor or 0}
+    for column, value in (
+        ("kind", kind),
+        ("blocked_by", blocked_by),
+        ("condition_id", condition_id),
+    ):
+        if value:
+            where.append(f"n.{column} = %({column})s")
+            params[column] = value
+    filtered = " AND ".join(where)
+    ordering = "n.score ASC NULLS LAST, n.ts, n.seq" if order == "nearest" else "n.ts, n.seq"
+    rows = conn.execute(
+        f"SELECT {NEAR_MISS_COLUMNS} FROM bt_near_misses n "
+        f"LEFT JOIN markets m ON m.condition_id = n.condition_id WHERE {filtered} "
+        f"ORDER BY {ordering} LIMIT %(limit)s OFFSET %(offset)s",
+        params,
+    ).fetchall()
+    total = conn.execute(
+        f"SELECT count(*) FROM bt_near_misses n WHERE {filtered}", params
+    ).fetchone()
+    by_kind = dict(
+        conn.execute(
+            "SELECT kind, count(*) FROM bt_near_misses WHERE run_id = %s GROUP BY 1", (run_id,)
+        ).fetchall()
+    )
+    by_blocker = dict(
+        conn.execute(
+            "SELECT blocked_by, count(*) FROM bt_near_misses WHERE run_id = %s "
+            "AND blocked_by IS NOT NULL GROUP BY 1",
+            (run_id,),
+        ).fetchall()
+    )
+    page = rows[:limit]
+    return NearMissPage(
+        run_id=run_id,
+        near_misses=[NearMissRow(**_near_miss_row(r)) for r in page],
+        next_cursor=(cursor or 0) + limit if len(rows) > limit else None,
+        total=int(total[0]) if total else 0,
+        counts_by_kind=by_kind,
+        counts_by_blocker=by_blocker,
+    )
+
+
+def _near_miss_detail(conn: psycopg.Connection[Any], run_id: str, seq: int) -> NearMissDetail:
+    row = conn.execute(
+        f"SELECT {NEAR_MISS_COLUMNS}, n.trace FROM bt_near_misses n "
+        "LEFT JOIN markets m ON m.condition_id = n.condition_id WHERE n.run_id = %s AND n.seq = %s",
+        (run_id, seq),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"near miss {seq} not found in {run_id}")
+    return NearMissDetail(**_near_miss_row(row), trace=row[10])
+
+
+@router.get("/{run_id}/near-misses/{seq}")
+def near_miss(run_id: str, seq: int, conn: ConnDep) -> NearMissDetail:
+    return _near_miss_detail(conn, run_id, seq)
+
+
+@router.get("/{run_id}/near-misses/{seq}/replay")
+def near_miss_replay(run_id: str, seq: int, conn: ConnDep) -> Replay:
+    detail = _near_miss_detail(conn, run_id, seq)
+    g = R.near_miss_geometry(detail)
+    start, end = g.span()
+    context = conn.execute(
+        "SELECT seq, entry_ts, fill_status, entry_price, exit_reason FROM bt_trades WHERE run_id = %s "
+        "AND clob_token_id = %s AND entry_ts >= %s AND entry_ts <= %s ORDER BY entry_ts",
+        (run_id, detail.clob_token_id, start, end),
+    ).fetchall()
+    markers = g.markers + [
+        ReplayMarker(
+            ts=ts,
+            kind="ENTRY" if fill in ("FILLED", "PARTIAL") else "ATTEMPT",
+            price=None if price is None else float(price),
+            label=f"Trade #{trade_seq}: {fill}" + (f", exit {reason}" if reason else ""),
+            ref=trade_seq,
+        )
+        for trade_seq, ts, fill, price, reason in context
+    ]
+    return _replay(
+        conn,
+        run_id,
+        "near_miss",
+        seq,
+        detail.condition_id,
+        detail.clob_token_id,
+        g,
+        markers,
+        None,
+        detail,
+    )
 
 
 @router.get("/{run_id}/export.csv", response_class=Response)

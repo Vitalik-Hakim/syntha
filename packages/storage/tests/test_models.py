@@ -20,6 +20,7 @@ def test_every_prd_table_is_mapped() -> None:
         "collection_markets",
         "orderbook_deltas",
         "bt_ledger",
+        "bt_near_misses",
     }
 
 

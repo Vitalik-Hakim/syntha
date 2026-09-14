@@ -2,28 +2,33 @@
 
 import { createColumnHelper, flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Badge, Disclaimer, EmptyState, ErrorState, Loading, Signed } from "@/components/ui";
-import { apiGet, type TradeDetail, type TradePage, type TradeRow } from "@/lib/api/client";
+import { apiGet, type TradePage, type TradeRow } from "@/lib/api/client";
 import { duration, price, shares, ts, usd } from "@/lib/format";
 
 const STATUSES = ["FILLED", "PARTIAL", "UNEXECUTABLE", "REJECTED_MIN_SIZE"] as const;
 const col = createColumnHelper<TradeRow>();
 
-export function Blotter({ id }: { id: string }) {
-  const [status, setStatus] = useState<string | null>(null);
+export function Blotter({ id, initialStatus = null, initialExitReason = null }: {
+  id: string; initialStatus?: string | null; initialExitReason?: string | null;
+}) {
+  const router = useRouter();
+  const [status, setStatus] = useState<string | null>(initialStatus);
+  const [exitReason, setExitReason] = useState<string | null>(initialExitReason);
   const [rows, setRows] = useState<TradeRow[]>([]);
   const [page, setPage] = useState<TradePage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<number | null>(null);
 
   const fetchPage = useCallback(async (cursor: number | null, reset: boolean) => {
     setLoading(true);
     try {
       const q = new URLSearchParams({ limit: "100" });
       if (status) q.set("fill_status", status);
+      if (exitReason) q.set("exit_reason", exitReason);
       if (cursor !== null) q.set("cursor", String(cursor));
       const next = await apiGet<TradePage>(`/backtests/${id}/trades?${q}`);
       setPage(next);
@@ -34,7 +39,7 @@ export function Blotter({ id }: { id: string }) {
     } finally {
       setLoading(false);
     }
-  }, [id, status]);
+  }, [id, status, exitReason]);
 
   useEffect(() => {
     void fetchPage(null, true);
@@ -42,7 +47,7 @@ export function Blotter({ id }: { id: string }) {
 
   const columns = useMemo(() => [
     col.accessor("seq", { header: "#", cell: (c) => <span className="num text-ink-faint">{c.getValue()}</span> }),
-    col.accessor("fill_status", { header: "Fill", cell: (c) => <Badge kind={c.getValue()}>{c.getValue().replace("_", " ")}</Badge> }),
+    col.accessor("fill_status", { header: "Fill", cell: (c) => <Badge kind={c.getValue()}>{c.getValue().replaceAll("_", " ")}</Badge> }),
     col.accessor("question", { header: "Market", cell: (c) => <span className="line-clamp-1 max-w-[22rem] text-ink" title={c.getValue() ?? ""}>{c.getValue() ?? c.row.original.condition_id}</span> }),
     col.accessor("entry_ts", { header: "Entry", cell: (c) => <span className="num text-ink-muted">{ts(c.getValue())}</span> }),
     col.accessor("entry_price", { header: "Price", cell: (c) => <span className="num">{price(c.getValue())}</span> }),
@@ -69,8 +74,12 @@ export function Blotter({ id }: { id: string }) {
       <div className="mb-3 flex flex-wrap gap-2">
         <FilterChip active={status === null} onClick={() => setStatus(null)} label="All" n={page ? Object.values(page.counts_by_status).reduce((a, b) => a + b, 0) : undefined} />
         {STATUSES.map((s) => (
-          <FilterChip key={s} active={status === s} onClick={() => setStatus(s)} label={s.replace("_", " ")} n={page?.counts_by_status[s] ?? 0} />
+          <FilterChip key={s} active={status === s} onClick={() => setStatus(s)} label={s.replaceAll("_", " ")} n={page?.counts_by_status[s] ?? 0} />
         ))}
+        {exitReason ? (
+          <FilterChip active onClick={() => setExitReason(null)} label={`exit ${exitReason} ×`} />
+        ) : null}
+        <Link href={`/runs/${id}/near-misses`} className="ml-auto self-center text-xs text-ink-muted hover:text-ink">Near misses →</Link>
       </div>
 
       {error ? <ErrorState title="Could not load trades" detail={error} /> : null}
@@ -90,8 +99,11 @@ export function Blotter({ id }: { id: string }) {
             </thead>
             <tbody>
               {table.getRowModel().rows.map((r) => (
-                <tr key={r.id} onClick={() => setSelected(r.original.seq)}
-                    className={`cursor-pointer border-t border-line hover:bg-raised ${selected === r.original.seq ? "bg-raised" : ""}`}>
+                <tr key={r.id} tabIndex={0}
+                    onClick={() => router.push(`/runs/${id}/trades/${r.original.seq}`)}
+                    onKeyDown={(e) => e.key === "Enter" && router.push(`/runs/${id}/trades/${r.original.seq}`)}
+                    title="Open the replay"
+                    className="cursor-pointer border-t border-line hover:bg-raised focus:bg-raised focus:outline-none">
                   {r.getVisibleCells().map((c) => <td key={c.id} className="whitespace-nowrap px-2 py-1.5">{flexRender(c.column.columnDef.cell, c.getContext())}</td>)}
                 </tr>
               ))}
@@ -109,8 +121,6 @@ export function Blotter({ id }: { id: string }) {
         ) : null}
         {loading && !rows.length ? <Loading label="Loading trades…" /> : null}
       </div>
-
-      {selected !== null ? <TradeDrawer id={id} seq={selected} onClose={() => setSelected(null)} /> : null}
     </div>
   );
 }
@@ -121,60 +131,5 @@ function FilterChip({ label, n, active, onClick }: { label: string; n?: number; 
             className={`border px-2 py-1 text-xs ${active ? "border-accent text-ink" : "border-line text-ink-muted hover:text-ink"}`}>
       {label} {n !== undefined ? <span className="num text-ink-faint">{n.toLocaleString()}</span> : null}
     </button>
-  );
-}
-
-function TradeDrawer({ id, seq, onClose }: { id: string; seq: number; onClose: () => void }) {
-  const [trade, setTrade] = useState<TradeDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    setTrade(null);
-    apiGet<TradeDetail>(`/backtests/${id}/trades/${seq}`).then(setTrade).catch((e) => setError(String(e)));
-  }, [id, seq]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const clauses = (trade?.entry_rule_trace?.clauses ?? []) as Array<{ feature: string; op: string; threshold: number; actual: number | null; passed: boolean; params?: Record<string, number> }>;
-  return (
-    <aside className="fixed inset-y-0 right-0 z-10 w-full max-w-lg overflow-y-auto border-l border-line bg-surface px-5 py-4 shadow-none">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-medium">Trade <span className="num">#{seq}</span></h2>
-        <button type="button" onClick={onClose} className="text-xs text-ink-muted hover:text-ink">Close (Esc)</button>
-      </div>
-      {error ? <ErrorState title="Could not load trade" detail={error} /> : null}
-      {!trade ? <Loading /> : (
-        <div className="space-y-4 text-xs">
-          <p className="text-sm text-ink">{trade.question}</p>
-          <div className="flex gap-2"><Badge kind={trade.fill_status}>{trade.fill_status}</Badge>{trade.exit_reason ? <Badge>{trade.exit_reason}</Badge> : null}</div>
-          <div>
-            <h3 className="mb-1 uppercase tracking-wider text-ink-faint">Why it entered</h3>
-            <ul className="space-y-1">
-              {clauses.map((c, i) => (
-                <li key={i} className="flex items-center gap-2">
-                  <span className={c.passed ? "text-gain" : "text-loss"} aria-hidden>{c.passed ? "✓" : "✗"}</span>
-                  <span className="font-mono text-ink">{c.feature}{c.params ? `(${Object.entries(c.params).map(([k, v]) => `${k}=${v}`).join(", ")})` : ""}</span>
-                  <span className="text-ink-muted">{c.op} {c.threshold}</span>
-                  <span className="num ml-auto text-ink">{c.actual === null ? "null" : Number(c.actual).toFixed(4)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <details open>
-            <summary className="cursor-pointer text-ink-faint">Entry trace (sizing and execution)</summary>
-            <pre className="mt-1 overflow-x-auto whitespace-pre-wrap bg-raised p-2 font-mono text-[11px] text-ink-muted">{JSON.stringify({ sizing: trade.entry_rule_trace.sizing, execution: trade.entry_rule_trace.execution, attempts: trade.entry_rule_trace.attempts, attempt_refusals: trade.entry_rule_trace.attempt_refusals }, null, 2)}</pre>
-          </details>
-          {trade.exit_rule_trace ? (
-            <details>
-              <summary className="cursor-pointer text-ink-faint">Exit trace</summary>
-              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap bg-raised p-2 font-mono text-[11px] text-ink-muted">{JSON.stringify(trade.exit_rule_trace, null, 2)}</pre>
-            </details>
-          ) : null}
-        </div>
-      )}
-    </aside>
   );
 }

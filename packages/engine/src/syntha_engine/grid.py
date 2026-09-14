@@ -143,6 +143,16 @@ class TokenFrame:
     def cum_notional(self) -> FloatArray:
         return self.prior_notional + np.cumsum(self.dense_notional())
 
+    def cum_notional_at(self, i: int, prefix: FloatArray | None = None) -> float:
+        """`cum_notional()[i]` without materialising the dense array. np.cumsum adds in order and
+        adding the dense zeros changes nothing, so the value is bit-identical. `prefix` is
+        `np.cumsum(pr_notional)`, for callers that look up many bars."""
+        j = int(np.searchsorted(self.pr_local, min(i, self.n - 1), "right"))
+        if j == 0:
+            return float(self.prior_notional + 0.0)
+        partial = prefix[j - 1] if prefix is not None else np.cumsum(self.pr_notional[:j])[-1]
+        return float(self.prior_notional + float(partial))
+
     def last_print(self) -> IntArray:
         mask = np.zeros(self.n, dtype=bool)
         mask[self.pr_local] = True

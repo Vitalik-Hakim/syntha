@@ -900,6 +900,239 @@
         "title": "MaxHold",
         "type": "object"
       },
+      "NearMissDetail": {
+        "properties": {
+          "blocked_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked By"
+          },
+          "clob_token_id": {
+            "title": "Clob Token Id",
+            "type": "string"
+          },
+          "condition_id": {
+            "title": "Condition Id",
+            "type": "string"
+          },
+          "failed_clauses": {
+            "title": "Failed Clauses",
+            "type": "integer"
+          },
+          "failing_features": {
+            "description": "Entry-rule features that did not hold",
+            "items": {
+              "type": "string"
+            },
+            "title": "Failing Features",
+            "type": "array"
+          },
+          "kind": {
+            "description": "RULES_FAILED | BLOCKED_BY_UNIVERSE | BLOCKED_BY_CONSTRAINT",
+            "title": "Kind",
+            "type": "string"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Closeness to firing for RULES_FAILED (lower is nearer): failing clauses plus their mean relative distance. A ranking, not a quantity.",
+            "title": "Score"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "trace": {
+            "additionalProperties": true,
+            "title": "Trace",
+            "type": "object"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "condition_id",
+          "clob_token_id",
+          "ts",
+          "kind",
+          "score",
+          "failed_clauses",
+          "blocked_by",
+          "question",
+          "failing_features",
+          "trace"
+        ],
+        "title": "NearMissDetail",
+        "type": "object"
+      },
+      "NearMissPage": {
+        "properties": {
+          "counts_by_blocker": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts By Blocker",
+            "type": "object"
+          },
+          "counts_by_kind": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts By Kind",
+            "type": "object"
+          },
+          "near_misses": {
+            "items": {
+              "$ref": "#/components/schemas/NearMissRow"
+            },
+            "title": "Near Misses",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "near_misses",
+          "next_cursor",
+          "total",
+          "counts_by_kind",
+          "counts_by_blocker"
+        ],
+        "title": "NearMissPage",
+        "type": "object"
+      },
+      "NearMissRow": {
+        "description": "A bar where the strategy did not trade (PRD §13.2).",
+        "properties": {
+          "blocked_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked By"
+          },
+          "clob_token_id": {
+            "title": "Clob Token Id",
+            "type": "string"
+          },
+          "condition_id": {
+            "title": "Condition Id",
+            "type": "string"
+          },
+          "failed_clauses": {
+            "title": "Failed Clauses",
+            "type": "integer"
+          },
+          "failing_features": {
+            "description": "Entry-rule features that did not hold",
+            "items": {
+              "type": "string"
+            },
+            "title": "Failing Features",
+            "type": "array"
+          },
+          "kind": {
+            "description": "RULES_FAILED | BLOCKED_BY_UNIVERSE | BLOCKED_BY_CONSTRAINT",
+            "title": "Kind",
+            "type": "string"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Closeness to firing for RULES_FAILED (lower is nearer): failing clauses plus their mean relative distance. A ranking, not a quantity.",
+            "title": "Score"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "condition_id",
+          "clob_token_id",
+          "ts",
+          "kind",
+          "score",
+          "failed_clauses",
+          "blocked_by",
+          "question",
+          "failing_features"
+        ],
+        "title": "NearMissRow",
+        "type": "object"
+      },
       "PartialFillPolicy": {
         "description": "§11.3.",
         "enum": [
@@ -1030,6 +1263,429 @@
           "dependencies"
         ],
         "title": "ReadinessResponse",
+        "type": "object"
+      },
+      "Replay": {
+        "description": "Everything the replay chart and checklist need (PRD §13.3), from stored traces and data.",
+        "properties": {
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "levels": {
+            "items": {
+              "$ref": "#/components/schemas/ReplayLevel"
+            },
+            "title": "Levels",
+            "type": "array"
+          },
+          "markers": {
+            "items": {
+              "$ref": "#/components/schemas/ReplayMarker"
+            },
+            "title": "Markers",
+            "type": "array"
+          },
+          "market": {
+            "$ref": "#/components/schemas/ReplayMarket"
+          },
+          "near_miss": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NearMissDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Seq"
+          },
+          "prev_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prev Seq"
+          },
+          "prices": {
+            "$ref": "#/components/schemas/ReplaySeries"
+          },
+          "prints": {
+            "$ref": "#/components/schemas/ReplayPrints"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          },
+          "subject": {
+            "description": "trade | near_miss",
+            "title": "Subject",
+            "type": "string"
+          },
+          "trade": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TradeDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "windows": {
+            "items": {
+              "$ref": "#/components/schemas/ReplayWindow"
+            },
+            "title": "Windows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run_id",
+          "subject",
+          "seq",
+          "market",
+          "start",
+          "end",
+          "prices",
+          "prints",
+          "markers",
+          "windows",
+          "levels",
+          "trade",
+          "near_miss",
+          "prev_seq",
+          "next_seq"
+        ],
+        "title": "Replay",
+        "type": "object"
+      },
+      "ReplayLevel": {
+        "properties": {
+          "kind": {
+            "description": "TAKE_PROFIT_PCT | STOP_LOSS_PCT | PRICE_ABOVE | PRICE_BELOW | ENTRY_PRICE_RULE",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "price": {
+            "title": "Price",
+            "type": "number"
+          }
+        },
+        "required": [
+          "kind",
+          "price",
+          "label"
+        ],
+        "title": "ReplayLevel",
+        "type": "object"
+      },
+      "ReplayMarker": {
+        "properties": {
+          "kind": {
+            "description": "SIGNAL | ENTRY | ATTEMPT | EXIT_SIGNAL | EXIT_FILL | SETTLE | END_OF_BACKTEST | RESOLVED | NEAR_MISS",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "seq of the linked near miss (NEAR_MISS) or trade (ENTRY/ATTEMPT)",
+            "title": "Ref"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ts",
+          "kind",
+          "price",
+          "label"
+        ],
+        "title": "ReplayMarker",
+        "type": "object"
+      },
+      "ReplayMarket": {
+        "properties": {
+          "clob_token_id": {
+            "title": "Clob Token Id",
+            "type": "string"
+          },
+          "condition_id": {
+            "title": "Condition Id",
+            "type": "string"
+          },
+          "end_date": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Scheduled end",
+            "title": "End Date"
+          },
+          "open_ts": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Ts"
+          },
+          "outcome_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome Name"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Shown after the fact for context; strategies never see it (PRD §5)",
+            "title": "Resolved At"
+          },
+          "tick_size": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tick Size"
+          }
+        },
+        "required": [
+          "condition_id",
+          "clob_token_id",
+          "question",
+          "outcome_name",
+          "tick_size",
+          "open_ts",
+          "end_date",
+          "resolved_at",
+          "resolution"
+        ],
+        "title": "ReplayMarket",
+        "type": "object"
+      },
+      "ReplayPrints": {
+        "properties": {
+          "price": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Price",
+            "type": "array"
+          },
+          "side": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Side",
+            "type": "array"
+          },
+          "size": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Size",
+            "type": "array"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "ts": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Ts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ts",
+          "price",
+          "size",
+          "side",
+          "truncated"
+        ],
+        "title": "ReplayPrints",
+        "type": "object"
+      },
+      "ReplaySeries": {
+        "description": "Raw 1-minute price samples for the token, epoch seconds. The first point may precede the\nwindow: it is the price in force when the window opens.",
+        "properties": {
+          "downsampled": {
+            "title": "Downsampled",
+            "type": "boolean"
+          },
+          "price": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Price",
+            "type": "array"
+          },
+          "total_points": {
+            "title": "Total Points",
+            "type": "integer"
+          },
+          "ts": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Ts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ts",
+          "price",
+          "total_points",
+          "downsampled"
+        ],
+        "title": "ReplaySeries",
+        "type": "object"
+      },
+      "ReplayWindow": {
+        "description": "The time span a lookback feature read at the decision bar.",
+        "properties": {
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "side": {
+            "description": "entry | exit",
+            "title": "Side",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "start",
+          "end",
+          "passed",
+          "side"
+        ],
+        "title": "ReplayWindow",
         "type": "object"
       },
       "RuleExit": {
@@ -2648,6 +3304,241 @@
         ]
       }
     },
+    "/api/backtests/{run_id}/near-misses": {
+      "get": {
+        "description": "Bars where the strategy did not trade (PRD §13.2). `nearest` lists rule failures closest to\nfiring first, then blocked bars in time order.",
+        "operationId": "near_misses_api_backtests__run_id__near_misses_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "blocked_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Blocked By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "condition_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Condition Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "nearest",
+              "pattern": "^(nearest|time)$",
+              "title": "Order",
+              "type": "string"
+            }
+          },
+          {
+            "description": "offset from a previous page",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "offset from a previous page",
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NearMissPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Near Misses",
+        "tags": [
+          "backtests"
+        ]
+      }
+    },
+    "/api/backtests/{run_id}/near-misses/{seq}": {
+      "get": {
+        "operationId": "near_miss_api_backtests__run_id__near_misses__seq__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "seq",
+            "required": true,
+            "schema": {
+              "title": "Seq",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NearMissDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Near Miss",
+        "tags": [
+          "backtests"
+        ]
+      }
+    },
+    "/api/backtests/{run_id}/near-misses/{seq}/replay": {
+      "get": {
+        "operationId": "near_miss_replay_api_backtests__run_id__near_misses__seq__replay_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "seq",
+            "required": true,
+            "schema": {
+              "title": "Seq",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Replay"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Near Miss Replay",
+        "tags": [
+          "backtests"
+        ]
+      }
+    },
     "/api/backtests/{run_id}/stream": {
       "get": {
         "description": "Server-sent events: `progress` while queued or running, then one `status` event.",
@@ -2837,6 +3728,58 @@
           }
         },
         "summary": "Trade",
+        "tags": [
+          "backtests"
+        ]
+      }
+    },
+    "/api/backtests/{run_id}/trades/{seq}/replay": {
+      "get": {
+        "description": "Price, prints and decision geometry around one trade (PRD §13.3).",
+        "operationId": "trade_replay_api_backtests__run_id__trades__seq__replay_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "seq",
+            "required": true,
+            "schema": {
+              "title": "Seq",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Replay"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trade Replay",
         "tags": [
           "backtests"
         ]

@@ -61,6 +61,8 @@ class EntryDecision:
 class ExitDecision:
     reason: ExitReason
     rule: dict[str, Any] = field(default_factory=dict)
+    # Every exit rule evaluated at the bar, in list order (PRD §13.1): the checklist behind `rule`.
+    checks: list[dict[str, Any]] = field(default_factory=list)
 
 
 class Strategy(Protocol):
@@ -164,49 +166,151 @@ class DSLStrategy:
         enter = (all(passes) if entry.all is not None else any(passes)) if clauses else True
         return EntryDecision(enter, clauses, any(c.get("null") for c in clauses))
 
+    @staticmethod
+    def _fires(rule: Any, price: float | None, view: MarketView, position: PositionView) -> bool:
+        """Whether one exit rule holds. The single definition used by both the hot path and the
+        trace."""
+        kind = rule.type
+        if kind == "TAKE_PROFIT_PCT":
+            return price is not None and price >= position.entry_price * (1 + rule.value)
+        if kind == "STOP_LOSS_PCT":
+            return price is not None and price <= position.entry_price * (1 - rule.value)
+        if kind == "PRICE_ABOVE":
+            return price is not None and price >= rule.value
+        if kind == "PRICE_BELOW":
+            return price is not None and price <= rule.value
+        if kind == "MAX_HOLD_MINUTES":
+            return bool(position.holding_minutes >= rule.value)
+        cond = rule.condition
+        actual = view.features[F.feature_key(cond.feature, cond.params)]
+        return actual is not None and bool(_OPS[cond.op](actual, cond.value))
+
+    def _exit_check(
+        self, rule: Any, price: float | None, view: MarketView, position: PositionView
+    ) -> dict[str, Any]:
+        passed = self._fires(rule, price, view, position)
+        if rule.type in ("TAKE_PROFIT_PCT", "STOP_LOSS_PCT"):
+            up = rule.type == "TAKE_PROFIT_PCT"
+            return {
+                "type": rule.type,
+                "value": rule.value,
+                "target": position.entry_price * (1 + rule.value if up else 1 - rule.value),
+                "price": price,
+                "passed": passed,
+            }
+        if rule.type in ("PRICE_ABOVE", "PRICE_BELOW"):
+            return {"type": rule.type, "target": rule.value, "price": price, "passed": passed}
+        if rule.type == "MAX_HOLD_MINUTES":
+            return {
+                "type": rule.type,
+                "limit": rule.value,
+                "holding_minutes": position.holding_minutes,
+                "passed": passed,
+            }
+        clause = _clause(rule.condition, view.features)
+        assert clause["passed"] == passed
+        return {"type": rule.type, "clause": clause, "passed": passed}
+
     def evaluate_exit(self, view: MarketView, position: PositionView) -> ExitDecision | None:
+        """The first rule (in list order) that holds names the exit. Only when one fires is every
+        rule evaluated again for the trace."""
         price = view.price
+        rules = self.dsl.exit.any
+        for rule in rules:
+            if self._fires(rule, price, view, position):
+                checks = [self._exit_check(r, price, view, position) for r in rules]
+                first = next(i for i, c in enumerate(checks) if c["passed"])
+                checks[first]["fired"] = True
+                return ExitDecision(_EXIT_REASONS[rule.type], checks[first], checks)
+        return None
+
+    def exit_plan(self, entry_price: float) -> list[dict[str, Any]]:
+        """The exit rules resolved against a fill: price levels for price-based exits, the holding
+        limit for time exits. Uses the same arithmetic as `evaluate_exit`."""
+        plan: list[dict[str, Any]] = []
         for rule in self.dsl.exit.any:
             if rule.type == "TAKE_PROFIT_PCT":
-                target = position.entry_price * (1 + rule.value)
-                if price is not None and price >= target:
-                    return ExitDecision(
-                        ExitReason.TAKE_PROFIT,
-                        {"type": rule.type, "target": target, "price": price},
-                    )
+                plan.append(
+                    {
+                        "type": rule.type,
+                        "value": rule.value,
+                        "level": entry_price * (1 + rule.value),
+                    }
+                )
             elif rule.type == "STOP_LOSS_PCT":
-                target = position.entry_price * (1 - rule.value)
-                if price is not None and price <= target:
-                    return ExitDecision(
-                        ExitReason.STOP_LOSS, {"type": rule.type, "target": target, "price": price}
-                    )
-            elif rule.type == "PRICE_ABOVE":
-                if price is not None and price >= rule.value:
-                    return ExitDecision(
-                        ExitReason.PRICE_TARGET,
-                        {"type": rule.type, "target": rule.value, "price": price},
-                    )
-            elif rule.type == "PRICE_BELOW":
-                if price is not None and price <= rule.value:
-                    return ExitDecision(
-                        ExitReason.PRICE_TARGET,
-                        {"type": rule.type, "target": rule.value, "price": price},
-                    )
+                plan.append(
+                    {
+                        "type": rule.type,
+                        "value": rule.value,
+                        "level": entry_price * (1 - rule.value),
+                    }
+                )
             elif rule.type == "MAX_HOLD_MINUTES":
-                if position.holding_minutes >= rule.value:
-                    return ExitDecision(
-                        ExitReason.MAX_HOLD,
-                        {
-                            "type": rule.type,
-                            "limit": rule.value,
-                            "holding_minutes": position.holding_minutes,
-                        },
-                    )
+                plan.append({"type": rule.type, "limit_minutes": rule.value})
             elif rule.type == "RULE":
-                clause = _clause(rule.condition, view.features)
-                if clause["passed"]:
-                    return ExitDecision(ExitReason.RULE_EXIT, {"type": rule.type, "clause": clause})
-        return None
+                c = rule.condition
+                plan.append(
+                    {
+                        "type": rule.type,
+                        "clause": {
+                            "feature": c.feature,
+                            "params": dict(c.params),
+                            "op": c.op,
+                            "threshold": c.value,
+                        },
+                    }
+                )
+            else:  # PRICE_ABOVE / PRICE_BELOW
+                plan.append({"type": rule.type, "level": rule.value})
+        return plan
+
+    # ------------------------------------------------------------ near misses (PRD §13.2)
+
+    def entry_closeness(self, features: Mapping[str, FloatArray]) -> FloatArray | None:
+        """How far each bar is from firing; lower is nearer, 0 when the entry fires.
+
+        For `all`, the integer part is the number of failing clauses and the fraction their mean
+        distance; for `any`, 1 plus half the smallest distance (one clause has to flip). A failing
+        clause's distance is |actual − threshold| / |threshold| (or / 1 for a zero threshold),
+        capped at 1, and 1 for a null feature. None for random entries, which have no near misses.
+        """
+        entry = self.dsl.entry
+        conds = entry.all if entry.all is not None else entry.any
+        if entry.random is not None or not conds:
+            return None
+        n = next(iter(features.values())).size
+        failed = np.zeros(n)
+        dist = np.zeros(n) if entry.all is not None else np.ones(n)
+        for cond in conds:
+            values = features[F.feature_key(cond.feature, cond.params)]
+            null = np.isnan(values)
+            with np.errstate(invalid="ignore", over="ignore"):
+                ok = _OPS[cond.op](values, cond.value) & ~null
+                d = np.abs(values - cond.value)
+                d /= abs(cond.value) or 1.0
+            np.clip(d, 1e-9, 1.0, out=d)
+            d[null] = 1.0
+            d[ok] = 0.0
+            failed += ~ok
+            if entry.all is not None:
+                dist += d
+            else:
+                np.minimum(dist, d, out=dist)
+        if entry.all is not None:
+            score: FloatArray = failed + dist / (len(conds) + 1)
+        else:
+            score = np.where(failed == len(conds), 1.0 + dist / 2, 0.0)
+        return score
+
+
+_EXIT_REASONS = {
+    "TAKE_PROFIT_PCT": ExitReason.TAKE_PROFIT,
+    "STOP_LOSS_PCT": ExitReason.STOP_LOSS,
+    "PRICE_ABOVE": ExitReason.PRICE_TARGET,
+    "PRICE_BELOW": ExitReason.PRICE_TARGET,
+    "MAX_HOLD_MINUTES": ExitReason.MAX_HOLD,
+    "RULE": ExitReason.RULE_EXIT,
+}
 
 
 def compile_strategy(dsl: StrategyDSL, step_minutes: int) -> DSLStrategy:

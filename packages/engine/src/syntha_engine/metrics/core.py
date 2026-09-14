@@ -34,6 +34,7 @@ DEFINITIONS = {
     "cost_ratio": "(fees + slippage) / |gross P&L|",
     "gross_pnl": "shares × (exit reference price − entry reference price)",
     "slippage_cost": "shares × |fill price − reference price|, entry and exit",
+    "exit_reason_breakdown": "executed trades grouped by exit reason; win rate, P&L and costs within each group",
 }
 
 
@@ -96,6 +97,36 @@ def _histogram(values: list[float], bins: int = 20) -> dict[str, Any]:
     for v in values:
         counts[min(int((v - lo) / width), bins - 1)] += 1
     return {"edges": [lo + i * width for i in range(bins + 1)], "counts": counts}
+
+
+def exit_reason_breakdown(executed: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per exit reason: how many trades, how they did, and what they cost (PRD §12.4). Most
+    trades first."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for t in executed:
+        groups.setdefault(t["exit_reason"] or "OPEN", []).append(t)
+    rows = []
+    for reason, group in groups.items():
+        nets = [Decimal(t["net_pnl"]) for t in group]
+        holding = [t["holding_seconds"] for t in group if t["holding_seconds"] is not None]
+        rows.append(
+            {
+                "reason": reason,
+                "trades": len(group),
+                "share": len(group) / len(executed),
+                "wins": sum(1 for n in nets if n > 0),
+                "win_rate": sum(1 for n in nets if n > 0) / len(group),
+                "net_pnl": float(sum(nets, Decimal(0))),
+                "gross_pnl": float(sum((Decimal(t["gross_pnl"]) for t in group), Decimal(0))),
+                "fees": float(sum((Decimal(t["fees_total"]) for t in group), Decimal(0))),
+                "slippage": float(sum((Decimal(t["slippage_cost"]) for t in group), Decimal(0))),
+                "mean_net_pnl": float(sum(nets, Decimal(0)) / len(group)),
+                "mean_return_pct": statistics.fmean(float(Decimal(t["return_pct"])) for t in group),
+                "median_holding_seconds": statistics.median(holding) if holding else None,
+            }
+        )
+    rows.sort(key=lambda r: (-len(groups[str(r["reason"])]), str(r["reason"])))
+    return rows
 
 
 def compute_metrics(
@@ -187,6 +218,7 @@ def compute_metrics(
         "holding_seconds_median": statistics.median(holding) if holding else None,
         "pnl_histogram": _histogram([float(n) for n in nets]),
         "exit_reasons": dict(sorted(Counter(t["exit_reason"] for t in executed).items())),
+        "exit_reason_breakdown": exit_reason_breakdown(executed),
         "cost_attribution": {
             "gross_pnl": float(gross),
             "fees": float(fees),

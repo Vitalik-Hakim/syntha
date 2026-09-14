@@ -76,6 +76,9 @@ def write_outputs(out: Path, request: BacktestRequest, result: BacktestResult) -
     for name in ("manifest", "metrics", "data_quality"):
         (out / f"{name}.json").write_text(json.dumps(doc[name], indent=2, default=str) + "\n")
     (out / "trades.jsonl").write_text("".join(canonical_json(t) + "\n" for t in result.trades))
+    (out / "near_misses.jsonl").write_text(
+        "".join(canonical_json(nm) + "\n" for nm in result.near_misses)
+    )
     _write_csv(out / "trades.csv", result.trades, TRADE_COLUMNS)
     _write_csv(
         out / "equity.csv", result.equity, list(result.equity[0]) if result.equity else ["ts"]

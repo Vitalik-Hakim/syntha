@@ -13,7 +13,7 @@ from syntha_worker.fixtures import load_fixture
 GOLDEN = Path(__file__).parent / "golden"
 
 
-def _bytes(name: str, random: bool = False) -> tuple[str, str, str]:
+def _bytes(name: str, random: bool = False) -> tuple[str, str, str, str]:
     fx = load_fixture(GOLDEN / name)
     request = fx.request
     if random:
@@ -30,7 +30,12 @@ def _bytes(name: str, random: bool = False) -> tuple[str, str, str]:
         )
         request = request.model_copy(update={"strategy": strat})
     r = run(request, fx.dataset, fx.settlement)
-    return request.config_hash(), canonical_json(r.trades), canonical_json(r.equity)
+    return (
+        request.config_hash(),
+        canonical_json(r.trades),
+        canonical_json(r.equity),
+        canonical_json(r.near_misses),
+    )
 
 
 @pytest.mark.parametrize(
@@ -42,6 +47,7 @@ def test_identical_runs_are_byte_identical(name: str, random: bool) -> None:
     assert a[0] == b[0]
     assert a[1] == b[1]
     assert a[2] == b[2]
+    assert a[3] == b[3]
 
 
 def test_seed_changes_random_entries() -> None:

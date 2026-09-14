@@ -87,6 +87,12 @@ the worker, so `make dev` must be running all three processes. The same API is a
 http://localhost:8100/docs (`POST /api/backtests`, `GET /api/backtests/{id}`, `/stream`, `/equity`,
 `/trades`, `/export.csv`, `/export.json`).
 
+Every trade in the blotter opens a replay (`/runs/<id>/trades/<seq>`). It shows the price and
+trade prints around the decision, the lookback windows the rules read, the exit levels, and
+checklists of every filter and rule with the values the engine saw. **Near misses**
+(`/runs/<id>/near-misses`) answer "why didn't it trade here?": the bars that came closest to
+firing, and the bars where a filter or a portfolio constraint blocked an entry.
+
 Two collections so far:
 
 | Collection | What it is | Use it for |

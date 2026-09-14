@@ -216,6 +216,25 @@ def persist_result(conn: psycopg.Connection[Any], run_id: str, result: BacktestR
                         entry["ref"],
                     )
                 )
+        with cur.copy(
+            "COPY bt_near_misses (run_id, seq, condition_id, clob_token_id, ts, kind, score, "
+            "failed_clauses, blocked_by, trace) FROM STDIN"
+        ) as cp:
+            for nm in result.near_misses:
+                cp.write_row(
+                    (
+                        run_id,
+                        nm["seq"],
+                        nm["condition_id"],
+                        nm["clob_token_id"],
+                        nm["ts"],
+                        nm["kind"],
+                        None if nm["score"] is None else str(nm["score"]),
+                        nm["failed_clauses"],
+                        nm["blocked_by"],
+                        Jsonb(nm["trace"]),
+                    )
+                )
 
 
 # ------------------------------------------------------------------ execute

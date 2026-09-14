@@ -29,6 +29,7 @@ import numpy as np
 from syntha_contracts.backtest import BacktestRequest
 from syntha_contracts.enums import ExitReason, FillStatus, PartialFillPolicy, Side
 from syntha_engine import ENGINE_VERSION
+from syntha_engine import nearmiss as NM
 from syntha_engine.data import Dataset, FeeScheduleEntry, SettlementTable
 from syntha_engine.execution import fills
 from syntha_engine.execution.fees import fee_amount, resolve_fee_terms
@@ -65,6 +66,17 @@ def _q6(x: Decimal) -> str:
 
 def _q6_or_none(x: Decimal | None) -> str | None:
     return None if x is None else _q6(x)
+
+
+def _with_windows(clauses: list[dict[str, Any]], close_ts: int) -> list[dict[str, Any]]:
+    """Attach the time window each lookback feature read: it ends at the signal bar's close."""
+    out = []
+    for c in clauses:
+        minutes = max((c.get("params") or {}).values(), default=0)
+        if minutes:
+            c = {**c, "window": {"from": _iso(close_ts - minutes * 60), "to": _iso(close_ts)}}
+        out.append(c)
+    return out
 
 
 @dataclass(slots=True)
@@ -116,6 +128,7 @@ class BacktestResult:
     ledger: list[dict[str, Any]]
     metrics: dict[str, Any]
     data_quality: dict[str, Any]
+    near_misses: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -125,6 +138,9 @@ class _Prepared:
     draws: np.ndarray | None
     block_local: int  # local index from which trading is closed (resolved or closed)
     candidates: np.ndarray  # local indices
+    near: list[tuple[str, int, float | None]] = field(
+        default_factory=list
+    )  # (kind, local i, score)
 
 
 @dataclass
@@ -138,6 +154,7 @@ class _Quality:
     fee_warnings: Counter[str] = field(default_factory=Counter)
     markets_dropped: list[dict[str, str]] = field(default_factory=list)
     entry_funnel: Counter[str] = field(default_factory=Counter)
+    near_misses: dict[str, Any] = field(default_factory=dict)
 
 
 def _token_for_side(dataset: Dataset, condition_id: str, side: Side) -> str | None:
@@ -215,6 +232,9 @@ def run(
 
     # ------------------------------------------------------------ precompute (vectorized)
     prepared: dict[str, _Prepared] = {}
+    near_misses_enabled = isinstance(strat, DSLStrategy) and strat.dsl.entry.random is None
+    dsl_only = isinstance(strat, DSLStrategy)
+    near_miss_separation = max(strat.lookback_bars, 60 // step_min, 1)
     funnel: Counter[str] = Counter()
     ev_k_parts: list[np.ndarray] = []
     ev_tok_parts: list[np.ndarray] = []
@@ -278,15 +298,28 @@ def run(
         q.counters["bars_with_no_prints"] += frame.n - int(frame.pr_local.size)
         q.counters["prints_total"] += frame.n_prints
 
+        near: list[tuple[str, int, float | None]] = []
         if isinstance(strat, DSLStrategy):
             mask, nulls = strat.entry_mask(feats, draws)
             q.counters["bars_skipped_null_feature"] += int(np.sum(gate & nulls))
             funnel["entry_rules_true_ignoring_universe"] += int(mask.sum())
             candidates = np.flatnonzero(gate & mask)
             funnel["entry_rules_true_when_eligible"] += int(candidates.size)
+            closeness = strat.entry_closeness(feats)
+            if closeness is not None:
+                for i in NM.nearest(
+                    closeness,
+                    np.flatnonzero(gate & ~mask),
+                    NM.PER_MARKET[NM.RULES_FAILED],
+                    near_miss_separation,
+                ):
+                    near.append((NM.RULES_FAILED, i, float(closeness[i])))
+                gated_out = mask & ~gate & ~np.isnan(frame.price) & not_halted
+                for i in NM.stretch_starts(gated_out, NM.PER_MARKET[NM.BLOCKED_BY_UNIVERSE]):
+                    near.append((NM.BLOCKED_BY_UNIVERSE, i, None))
         else:
             candidates = np.flatnonzero(gate)
-        prepared[tok] = _Prepared(frame, feats, draws, block_local, candidates)
+        prepared[tok] = _Prepared(frame, feats, draws, block_local, candidates, near)
         if candidates.size:
             ev_k_parts.append(frame.k0 + candidates)
             ev_tok_parts.append(np.full(candidates.size, len(token_names), dtype=np.int32))
@@ -321,7 +354,9 @@ def run(
         if p.draws is not None:
             values[RANDOM_DRAW] = float(p.draws[i]) if in_range else None
         last = min(i, frame.n - 1)
-        first = max(0, last - strat.lookback_bars + 1)
+        # DSL strategies read only features, price and position, so they get no bar window;
+        # copying one per view was the engine's largest cost.
+        first = last + 1 if dsl_only else max(0, last - strat.lookback_bars + 1)
         window = tuple(
             Bar(
                 _dt(grid.ts(frame.k0 + j)),
@@ -382,6 +417,85 @@ def run(
     episodes: dict[str, _Episode] = {}
     dead_tokens: set[str] = set()
     evaluate_exits = not (isinstance(strat, DSLStrategy) and not strat.dsl.exit.any)
+    constraint_misses: dict[str, list[tuple[int, str]]] = {}
+    notional_prefix: dict[str, np.ndarray] = {}  # small LRU: traces cluster by token
+    last_blocked_k: dict[str, int] = {}
+
+    def universe_checks(tok: str, k: int) -> list[dict[str, Any]]:
+        """The universe filters at bar k, in funnel order, with actual values (PRD §13.1). Computed
+        per bar from the same data as the vectorized gates."""
+        frame = prepared[tok].frame
+        terms = frame.terms
+        close = grid.close(k)
+        checks: list[dict[str, Any]] = []
+        if terms.open_ts is not None:
+            checks.append(
+                {
+                    "filter": "market_open",
+                    "stage": "before_market_open",
+                    "op": "gte",
+                    "threshold": _iso(terms.open_ts),
+                    "actual": _iso(close),
+                    "passed": close >= terms.open_ts,
+                }
+            )
+        if universe.min_volume_asof is not None:
+            prefix = notional_prefix.pop(tok, None)
+            if prefix is None:
+                prefix = np.cumsum(frame.pr_notional)
+            notional_prefix[tok] = prefix  # most recently used last
+            while len(notional_prefix) > 32:
+                del notional_prefix[next(iter(notional_prefix))]
+            volume = frame.cum_notional_at(k - frame.k0, prefix)
+            checks.append(
+                {
+                    "filter": "min_volume_asof",
+                    "stage": "below_min_volume_asof",
+                    "op": "gte",
+                    "threshold": universe.min_volume_asof,
+                    "actual": volume,
+                    "passed": volume >= universe.min_volume_asof,
+                }
+            )
+        if universe.min_time_to_resolution_minutes is not None:
+            ttr = None if terms.end_ts is None else (terms.end_ts - close) / 60
+            checks.append(
+                {
+                    "filter": "min_time_to_resolution_minutes",
+                    "stage": "below_min_time_to_resolution",
+                    "op": "gte",
+                    "threshold": universe.min_time_to_resolution_minutes,
+                    "actual": ttr,
+                    "passed": ttr is not None and ttr >= universe.min_time_to_resolution_minutes,
+                }
+            )
+        stale = frame.staleness_minutes_at(k)
+        checks.append(
+            {
+                "filter": "max_stale_minutes",
+                "stage": "stale_price",
+                "op": "lte",
+                "threshold": request.max_stale_minutes,
+                "actual": None if math.isnan(stale) else stale,
+                "passed": (not math.isnan(stale)) and stale <= request.max_stale_minutes,
+            }
+        )
+        return checks
+
+    def signal_trace(tok: str, k: int, clauses: list[dict[str, Any]]) -> dict[str, Any]:
+        checks = universe_checks(tok, k)
+        failed = [c["filter"] for c in checks if not c["passed"]]
+        if failed:
+            raise EngineInconsistency(
+                f"entry signal for {tok} at {_iso(grid.ts(k))} passed the vectorized universe "
+                f"gates but failed {failed} when re-checked"
+            )
+        return {
+            "ts": _iso(grid.ts(k)),
+            "decision": "ENTER",
+            "clauses": _with_windows(clauses, grid.close(k)),
+            "universe": checks,
+        }
 
     def entry_trace(sig: Signal) -> dict[str, Any]:
         """The rule trace of an entry signal, built through the look-ahead-safe MarketView of the
@@ -396,11 +510,7 @@ def run(
                     f"{_iso(grid.ts(sig.signal_k))} but MarketView evaluation did not: "
                     f"{decision.clauses}"
                 )
-            sig.trace = {
-                "ts": _iso(grid.ts(sig.signal_k)),
-                "decision": "ENTER",
-                "clauses": decision.clauses,
-            }
+            sig.trace = signal_trace(sig.token_id, sig.signal_k, decision.clauses)
         return sig.trace
 
     def finish_episode(tok: str) -> None:
@@ -490,7 +600,14 @@ def run(
                     "ts": _iso(ts),
                     "decision": "EXIT",
                     "reason": decision.reason.value,
+                    "price": view.price,
                     "rule": decision.rule,
+                    "checks": [
+                        {**c, "clause": _with_windows([c["clause"]], grid.close(k))[0]}
+                        if "clause" in c
+                        else c
+                        for c in decision.checks
+                    ],
                 }
                 pending.append(Signal("EXIT", pos.token_id, k, k + lag, trace, decision.reason))
 
@@ -523,26 +640,33 @@ def run(
                 q.blocked_by_constraint[blocked] += 1
                 if ep is not None:
                     ep.last_candidate_k = k
+                # A near miss when this starts a blocked stretch; holding the token itself is
+                # the same signal continuing, not a missed trade.
+                if (
+                    near_misses_enabled
+                    and blocked != "already_holding"
+                    and last_blocked_k.get(tok) != k - 1
+                ):
+                    found = constraint_misses.setdefault(tok, [])
+                    if len(found) < NM.PER_MARKET[NM.BLOCKED_BY_CONSTRAINT]:
+                        found.append((k, blocked))
+                last_blocked_k[tok] = k
                 continue
-            signal_trace: dict[str, Any] | None = None
+            trace_now: dict[str, Any] | None = None
             if not isinstance(strat, DSLStrategy):
                 entry_decision = strat.evaluate_entry(view_for(tok, k, None))
                 if not entry_decision.enter:
                     if entry_decision.null_feature:
                         q.counters["bars_skipped_null_feature"] += 1
                     continue
-                signal_trace = {
-                    "ts": _iso(ts),
-                    "decision": "ENTER",
-                    "clauses": entry_decision.clauses,
-                }
+                trace_now = signal_trace(tok, k, entry_decision.clauses)
             if ep is None:
                 ep = episodes[tok] = _Episode(start_k=k, last_candidate_k=k)
                 q.counters["signals_generated"] += 1
             ep.last_candidate_k = k
             ep.attempts += 1
             ep.attempt_pending = True
-            pending.append(Signal("ENTRY", tok, k, k + lag, signal_trace))
+            pending.append(Signal("ENTRY", tok, k, k + lag, trace_now))
             pend_tokens.add(tok)
             pend_events.append(terms.event_id)
 
@@ -573,6 +697,7 @@ def run(
                     bar_marks,
                     ep,
                     entry_trace,
+                    strat.exit_plan if isinstance(strat, DSLStrategy) else None,
                 )
                 if failure is None:
                     del episodes[sig.token_id]
@@ -606,10 +731,79 @@ def run(
         portfolio.assert_invariants({}, constraints.max_open_positions)
 
     q.entry_funnel = funnel
+
+    # ------------------------------------------------------------ near misses (PRD §13.2)
+    near_rows: list[dict[str, Any]] = []
+
+    def near_miss(tok: str, k: int, kind: str, score: float | None, blocked_by: str | None) -> None:
+        """Trace a non-firing bar through the look-ahead-safe MarketView, and check that it agrees
+        with why the vectorized path skipped it."""
+        decision = strat.evaluate_entry(view_for(tok, k, None))
+        checks = universe_checks(tok, k)
+        failed_filters = [c["stage"] for c in checks if not c["passed"]]
+        if kind == NM.RULES_FAILED:
+            consistent = not decision.enter and not failed_filters
+        elif kind == NM.BLOCKED_BY_UNIVERSE:
+            consistent = decision.enter and bool(failed_filters)
+            blocked_by = failed_filters[0] if failed_filters else None
+        else:
+            consistent = decision.enter and not failed_filters
+        if not consistent:
+            raise EngineInconsistency(
+                f"near miss {kind} for {tok} at {_iso(grid.ts(k))} disagrees with MarketView: "
+                f"enter={decision.enter}, failed filters={failed_filters}"
+            )
+        failed_clauses = sum(1 for c in decision.clauses if not c["passed"])
+        near_rows.append(
+            {
+                "condition_id": dataset.tokens[tok].condition_id,
+                "clob_token_id": tok,
+                "ts": _iso(grid.ts(k)),
+                "kind": kind,
+                "score": None if score is None else round(score, 6),
+                "failed_clauses": failed_clauses,
+                "blocked_by": blocked_by,
+                "trace": {
+                    "ts": _iso(grid.ts(k)),
+                    "decision": "REJECT",
+                    "kind": kind,
+                    "blocked_by": blocked_by,
+                    "score": None if score is None else round(score, 6),
+                    "clauses": _with_windows(decision.clauses, grid.close(k)),
+                    "universe": checks,
+                },
+            }
+        )
+
+    if near_misses_enabled:
+        for tok in token_names:
+            p = prepared[tok]
+            for kind, i, score in p.near:
+                near_miss(tok, p.frame.k0 + i, kind, score, None)
+            for kk, reason in constraint_misses.get(tok, []):
+                near_miss(tok, kk, NM.BLOCKED_BY_CONSTRAINT, None, reason)
+    found_counts = Counter(str(r["kind"]) for r in near_rows)
+    near_rows, capped = NM.cap_run(near_rows)
+    for seq, row in enumerate(near_rows, start=1):
+        row["seq"] = seq
+    q.near_misses = {
+        "available": near_misses_enabled,
+        "note": None
+        if near_misses_enabled
+        else "near misses need DSL entry rules (random and custom Python entries have none)",
+        "found": {kind: found_counts.get(kind, 0) for kind in NM.KINDS},
+        "kept": dict(Counter(str(r["kind"]) for r in near_rows)),
+        "per_market_cap": NM.PER_MARKET,
+        "per_run_cap": NM.PER_RUN,
+        "capped": capped,
+        "separation_bars": near_miss_separation,
+    }
     report("simulate", 1.0)
-    return _build_result(
+    result = _build_result(
         request, dataset, grid, portfolio, equity_rows, q, strat, len(wanted), len(prepared)
     )
+    result.near_misses = near_rows
+    return result
 
 
 def _execute_entry(
@@ -625,6 +819,7 @@ def _execute_entry(
     marks: dict[str, Decimal],
     episode: _Episode,
     entry_trace: Any,
+    exit_plan: Callable[[float], list[dict[str, Any]]] | None,
 ) -> str | None:
     """Attempt an entry. Returns None when a position opened, else the refusal reason (the
     would-be trade row is kept on the episode)."""
@@ -768,6 +963,12 @@ def _execute_entry(
                 "execution": execution,
                 "attempts": episode.attempts,
                 "attempt_refusals": dict(sorted(episode.reasons.items())),
+                "exit_plan": [
+                    {**item, "deadline": _iso(ts + item["limit_minutes"] * 60)}
+                    if "limit_minutes" in item
+                    else item
+                    for item in (exit_plan(float(quote.fill_price)) if exit_plan else [])
+                ],
             },
             fill_status=status,
         )
@@ -820,9 +1021,14 @@ def _execute_exit(
     if fee_terms.warning:
         q.fee_warnings[fee_terms.warning] += 1
     fee = fee_amount(shares, quote.fill_price, fee_terms)
+    assert sig.reason is not None
     fill = {
         **quote.detail,
         "ts": _iso(ts),
+        # which exit decision this fill executed: a position can take several partial fills, each
+        # from its own (re-evaluated) exit signal
+        "signal_ts": (sig.trace or {}).get("ts"),
+        "signal_reason": sig.reason.value,
         "shares": str(shares),
         "fee": str(fee),
         "fee_rate": str(fee_terms.rate),
@@ -832,7 +1038,6 @@ def _execute_exit(
         q.fee_labels.add(fee_terms.label)
     portfolio.reduce(pos, ts, shares, quote.fill_price, quote.ref_price, fee, fill)
     if pos.shares == ZERO:
-        assert sig.reason is not None
         portfolio.close(pos, ts, sig.reason, {**(sig.trace or {}), "fills": pos.exit_fills})
     else:
         q.counters["partial_exits"] += 1
@@ -1040,6 +1245,7 @@ def _build_result(
         "fee_mode": request.fees.mode.value,
         "fee_schedules_applied": sorted(q.fee_labels),
         "fee_warnings": dict(sorted(q.fee_warnings.items())),
+        "near_misses": q.near_misses,
         "selection": dataset.selection,
         "bias_warnings": bias_warnings,
         "execution_model": request.execution.model.value,

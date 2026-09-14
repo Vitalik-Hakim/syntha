@@ -343,6 +343,26 @@ class BtEquity(Base):
     exposure_pct: Mapped[Decimal] = mapped_column(Numeric(8, 4))
 
 
+class BtNearMiss(Base):
+    """A bar where the strategy did not trade, with the trace that says why (PRD §13.2)."""
+
+    __tablename__ = "bt_near_misses"
+    __table_args__ = (Index("ix_bt_near_misses_run_id_condition_id", "run_id", "condition_id"),)
+
+    run_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("backtest_runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True)
+    condition_id: Mapped[str] = mapped_column(Text)
+    clob_token_id: Mapped[str] = mapped_column(Text)
+    ts: Mapped[datetime] = mapped_column(TSTZ)
+    kind: Mapped[str] = mapped_column(Text)
+    score: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    failed_clauses: Mapped[int] = mapped_column(Integer)
+    blocked_by: Mapped[str | None] = mapped_column(Text)
+    trace: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
 class BtLedger(Base):
     """Every cash movement of a run (PRD §10.1): the audit trail behind the equity curve."""
 

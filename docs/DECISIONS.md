@@ -209,3 +209,61 @@ row and noting the date.
   ≈ 41 s end to end: ≈ 19 s loading 2.9M bars from Postgres, ≈ 4 s simulating (2.8 s of it
   formatting 303k equity rows as strings), the rest persisting. Loading is the thing to optimise
   first.
+
+### M4
+
+- **Traces carry every check, with the value the engine saw** (PRD §13.1).
+  - Entry traces add `universe`: the universe filters in funnel order (market open, traded
+    notional to date, time to scheduled end, staleness), each with op, threshold, actual value and
+    pass/fail. They are recomputed per bar from the same data as the vectorised gates. A
+    recorded entry that fails one raises `EngineInconsistency`.
+  - Clauses with a lookback carry `window` (from/to), the span the feature read: it ends at the
+    signal bar's close.
+  - Filled entries carry `exit_plan`: take-profit and stop-loss price levels, computed with the
+    same arithmetic `evaluate_exit` uses, plus the max-hold deadline.
+  - Exit traces carry `checks`, every exit rule evaluated at the bar that fired, with the first
+    that held marked `fired`. Each exit fill records the `signal_ts` and `signal_reason` it
+    executed: a liquidity-capped exit fills in pieces, each from a re-evaluated signal. Found on
+    real data: trade 1 of the Underdog run exited in four fills, and before this change the chart
+    showed its only exit signal after three of them.
+- **Near misses** (PRD §13.2) are bars where the strategy did not enter, in three kinds:
+  - `RULES_FAILED`: eligible bars that came closest to firing. Closeness is failing clauses plus
+    their mean relative distance to the threshold (capped at 1 per clause; null counts as 1). Up
+    to 3 per market, at least `max(lookback, 60 min)` apart.
+  - `BLOCKED_BY_UNIVERSE`: the rules held but a filter blocked the bar. The first bars of up to 2
+    evenly spaced stretches per market.
+  - `BLOCKED_BY_CONSTRAINT`: the rules and filters held but a portfolio constraint blocked it.
+    The first bars of up to 2 stretches per market; `already_holding` is excluded, since that is
+    the same signal continuing.
+
+  Per-run caps are 3,000 / 1,000 / 1,000. Every near miss is re-evaluated through the
+  look-ahead-safe `MarketView`, and the run fails if that disagrees with why the vectorised path
+  skipped the bar. Random and custom Python entries have none. Stored in `bt_near_misses`
+  (migration 0007). The score is `numeric` because the schema has no float columns.
+- **Exit-reason breakdown** is an engine metric (`metrics.exit_reason_breakdown`). For each reason
+  it records trades, share, wins, win rate, net and gross P&L, fees, slippage, mean return and
+  median holding time. The results page renders it and links each reason to the filtered blotter.
+- **API additions to PRD §14:**
+  - `GET /api/backtests/{id}/trades/{seq}/replay` returns raw price samples and prints within ±2 h
+    of the trade, plus geometry read from the traces: markers, lookback windows, exit levels,
+    resolution time (shown after the fact) and nearby near misses. Prices are downsampled with
+    LTTB above 4,000 samples; prints are capped at 20,000.
+  - `GET /api/backtests/{id}/near-misses` (filter by kind, blocker or market; order nearest or by
+    time) and `/near-misses/{seq}`, both new.
+  - `/near-misses/{seq}/replay`, the same replay around a near miss.
+- **Screens.**
+  - `/runs/[id]/trades/[seq]` is the trade replay. It shows the chart, "why it entered" and "why it
+    exited" checklists, the exit plan, sizing and execution tables, exit fills, a timeline and the
+    raw traces. ←/→ moves between trades.
+  - Blotter rows open it; the M3 drawer is gone.
+  - `/runs/[id]/near-misses` and `/runs/[id]/near-misses/[seq]`.
+  - The chart scales its y-axis to the prices, prints and markers. Levels far from that range are
+    listed as "off chart" instead of flattening the price action.
+- **Engine performance.** DSL strategies get no bar window in their `MarketView`; they read only
+  features, price and position. Copying the window was the largest cost per view. With that and
+  a cheaper exit check, `make bench-engine` (1,000 markets × 90 days, near misses included) runs
+  in **32.2 s** (2.26 GB peak), against 30.0 s before M4 and 42.3 s for the first M4 draft.
+- **Acceptance evidence.** A browser script opened all 70 blotter rows of the Underdog run on
+  `july-2026-liquid-sports-300` (3 FILLED, 31 PARTIAL, 31 UNEXECUTABLE, 5 REJECTED_MIN_SIZE). Each
+  replay rendered a chart and a checklist with one row per check in the stored trace, and the
+  browser logged no errors.

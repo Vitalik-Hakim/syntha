@@ -274,6 +274,27 @@ execution bar, 5 below minimum size), gross +$3.73, fees −$11.68, slippage −
 tick is a large fraction of the price. This run is a baseline, not a tuned result: nothing should
 be optimised on it before the out-of-sample and robustness tooling (M5).
 
+**What the M4 explanations show about that run** (hypotheses for M5, not conclusions):
+
+| Exit reason | Trades | Win rate | Net P&L |
+| --- | --- | --- | --- |
+| STOP_LOSS | 17 | 12% | −$38.42 |
+| MAX_HOLD | 9 | 11% | −$2.74 |
+| TAKE_PROFIT | 6 | 100% | +$31.02 |
+| MARKET_RESOLVED | 2 | 0% | −$8.29 |
+
+- *Ticks swamp sub-2¢ entries.* The worst trade (#43, −$12.93) bought a 1.6¢ outcome: VWAP 0.0162
+  plus one tick, rounded up against the trader, filled at 0.018, a 12% cost on entry. The −20%
+  stop sat a few ticks below and fired on noise, then exited in seven liquidity-capped pieces.
+  `price ≤ 0.20` has no floor.
+- *Exit rules fire on the sampled price, fills happen at print VWAP.* In trade #1 the sampled
+  mid-like price ran about a tick below the prints the whole time, so the price the rules saw
+  was not the price the exit got.
+- *Near misses cluster.* The nearest rule failures are often several bars in the same few markets
+  (Spain 3–3 Argentina appears 3 times in the top 15), each one clause a few percent short.
+- *The built-in Underdog carries a `spread_proxy` exit rule*, which is always null on v1 data
+  (PRD §4.2), so it can never fire. Checklists show it as "no data".
+
 ---
 
 ## Schema

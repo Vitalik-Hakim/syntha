@@ -113,6 +113,63 @@ def test_run_end_to_end(client: TestClient) -> None:
     assert again["run_id"] != run_id
 
 
+def _run(client: TestClient, strategy: dict[str, object]) -> str:
+    created = client.post(
+        "/api/backtests", json={**REQUEST, "strategy": {**REQUEST["strategy"], **strategy}}
+    )
+    assert created.status_code == 201, created.text
+    return str(created.json()["run_id"])
+
+
+def test_trade_replay(client: TestClient) -> None:
+    run_id = _run(client, {"exit": {"any": [{"type": "TAKE_PROFIT_PCT", "value": 0.5}]}})
+    replay = client.get(f"/api/backtests/{run_id}/trades/1/replay")
+    assert replay.status_code == 200, replay.text
+    body = replay.json()
+    assert body["subject"] == "trade" and body["trade"]["seq"] == 1
+    assert body["market"]["question"] == "q?" and body["market"]["resolution"] == "YES"
+    kinds = [m["kind"] for m in body["markers"]]
+    assert kinds[:2] == ["SIGNAL", "ENTRY"] and "SETTLE" in kinds and "RESOLVED" in kinds
+    assert body["markers"] == sorted(body["markers"], key=lambda m: m["ts"])
+    # ±2 h around the trade: all ten price samples and all three prints (one is 23:00 the day before)
+    assert body["prices"]["total_points"] == 10 and len(body["prints"]["ts"]) == 3
+    assert body["prints"]["side"] == ["BUY", "BUY", "SELL"]
+    levels = {lv["kind"]: lv["price"] for lv in body["levels"]}
+    assert levels["ENTRY_PRICE_RULE"] == 0.5
+    assert levels["TAKE_PROFIT_PCT"] == pytest.approx(float(body["trade"]["entry_price"]) * 1.5)
+    entry = body["trade"]["entry_rule_trace"]
+    assert [c["filter"] for c in entry["universe"]] == ["market_open", "max_stale_minutes"]
+    assert body["prev_seq"] is None and body["next_seq"] is None
+    assert client.get(f"/api/backtests/{run_id}/trades/9/replay").status_code == 404
+
+
+def test_near_misses(client: TestClient) -> None:
+    run_id = _run(client, {"entry": {"all": [{"feature": "price", "op": "lte", "value": 0.39}]}})
+    page = client.get(f"/api/backtests/{run_id}/near-misses").json()
+    assert page["total"] >= 1 and page["counts_by_kind"] == {"RULES_FAILED": page["total"]}
+    row = page["near_misses"][0]
+    assert row["kind"] == "RULES_FAILED" and row["failed_clauses"] == 1
+    assert row["failing_features"] == ["price"]
+    assert row["score"] == pytest.approx(1 + (0.01 / 0.39) / 2, abs=1e-6)
+    detail = client.get(f"/api/backtests/{run_id}/near-misses/{row['seq']}").json()
+    clause = detail["trace"]["clauses"][0]
+    assert (clause["actual"], clause["passed"]) == (0.4, False)
+    replay = client.get(f"/api/backtests/{run_id}/near-misses/{row['seq']}/replay").json()
+    assert replay["subject"] == "near_miss" and replay["near_miss"]["seq"] == row["seq"]
+    assert replay["markers"][0]["kind"] == "NEAR_MISS" and replay["markers"][0]["ref"] == row["seq"]
+    assert [lv["kind"] for lv in replay["levels"]] == ["ENTRY_PRICE_RULE"]
+
+    blocked = _run(client, {"universe": {"min_volume_asof": 1_000_000}})
+    page = client.get(
+        f"/api/backtests/{blocked}/near-misses", params={"kind": "BLOCKED_BY_UNIVERSE"}
+    ).json()
+    assert page["total"] == 1
+    assert page["near_misses"][0]["blocked_by"] == "below_min_volume_asof"
+    assert page["counts_by_blocker"] == {"below_min_volume_asof": 1}
+    detail = client.get(f"/api/backtests/{blocked}").json()
+    assert detail["data_quality"]["near_misses"]["found"]["BLOCKED_BY_UNIVERSE"] == 1
+
+
 def test_errors(client: TestClient) -> None:
     assert client.get("/api/backtests/BT-00000000-99999").status_code == 404
     missing = {**REQUEST, "dataset": {"collection": "nope"}}
