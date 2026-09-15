@@ -26,10 +26,15 @@ def seed_minimal_dataset(url: str) -> str:
         conn.execute(
             "TRUNCATE fee_schedules, collections, collection_markets, events, markets, outcomes, "
             "trade_prints, price_bars, dataset_versions, backtest_runs, strategy_versions, "
-            "strategies RESTART IDENTITY CASCADE"
+            "strategies, catch_all_reviews RESTART IDENTITY CASCADE"
         )
         conn.execute(
-            """INSERT INTO collections VALUES ('00000000-0000-0000-0000-000000000001', 'c1', '{}', now())"""
+            """INSERT INTO collections VALUES ('00000000-0000-0000-0000-000000000001', 'c1',
+               '{"definition": {"end_date_min": "2026-01-01T00:00:00Z", "end_date_max": "2026-02-01T00:00:00Z"}}', now())"""
+        )
+        conn.execute(
+            "INSERT INTO catch_all_reviews (condition_id, is_catch_all, reviewed_at, note) "
+            "VALUES ('M2', true, now(), 'test seed')"
         )
         conn.execute(
             """INSERT INTO collection_markets VALUES ('00000000-0000-0000-0000-000000000001', 'M1')"""

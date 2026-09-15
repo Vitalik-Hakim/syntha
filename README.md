@@ -60,6 +60,10 @@ make verify-normalized    # do the tables still match the latest dataset version
 make m1-acceptance        # rebuild twice (hashes must match) + 500 markets with full history
 make recorder             # record the live order book for the designed watchlist (PRD v3 E7) — leave it running
 make recorder-coverage    # token-days recorded, gaps > 5 min, bytes/day, active strata
+make census-sample MONTH=2025-07 SEED=20250701   # PRD v3 census: list the month, fetch events, allocate (manifest in data/raw/_census)
+make census-fetch MONTH=2025-07                  # hourly prices, prints around the offsets, resolutions at 20 rps (resumable)
+make census-build MONTH=2025-07                  # census_markets / census_observations from data/raw, hashed in census_runs
+make census-verify MONTH=2025-07                 # the tables still match the recorded build
 ```
 
 Other collections: `make ingest-sample COLLECTION=name SAMPLE_START=… SAMPLE_END=… SAMPLE_N=…

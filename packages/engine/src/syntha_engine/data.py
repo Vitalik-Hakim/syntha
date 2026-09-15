@@ -136,6 +136,9 @@ class Dataset:
     selection: dict[str, Any] | None = None
     # v3 E4: wallet addresses by id, for TokenData.print_wallet.
     wallets: tuple[str, ...] = ()
+    # The collection's coverage window (epoch seconds): the period its markets were scheduled to
+    # end in. Capacity per month is measured over it (M9 decision, docs/DECISIONS.md).
+    coverage: tuple[int, int] | None = None
 
     def __post_init__(self) -> None:
         for tok in self.tokens.values():

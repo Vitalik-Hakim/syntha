@@ -134,6 +134,22 @@ ingest-sample: ## Draw the collection sample (writes an immutable manifest to da
 ingest-fetch: ## Fetch metadata, resolutions, prints and 1-minute prices into data/raw (resumable)
 	$(INGEST) fetch --name $(COLLECTION)
 
+.PHONY: census-sample
+census-sample: ## Draw the calibration census for MONTH (PRD v3 D1): make census-sample MONTH=2025-07 SEED=20250701
+	$(INGEST) --rps $(or $(RPS),20) census-sample --month $(MONTH) --seed $(SEED) --concurrency 16
+
+.PHONY: census-fetch
+census-fetch: ## Fetch the census month at 20 rps (resumable): make census-fetch MONTH=2025-07
+	$(INGEST) --rps $(or $(RPS),20) census-fetch --month $(MONTH) --concurrency 16
+
+.PHONY: census-build
+census-build: ## Build census_markets / census_observations for MONTH from data/raw and record the hash
+	$(INGEST) census-build --month $(MONTH)
+
+.PHONY: census-verify
+census-verify: ## Recompute the census hash for MONTH and compare with the recorded build
+	$(INGEST) census-verify --month $(MONTH)
+
 .PHONY: rebuild-normalized
 rebuild-normalized: ## Rebuild the normalized tables from data/raw alone and record a dataset version
 	$(INGEST) normalize

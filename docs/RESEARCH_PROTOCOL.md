@@ -218,3 +218,48 @@ Engine 0.7.0 (limit orders, same-side liquidity) also revises every number in th
 downward: the survivor's June run falls from +41.8% to +23.6% with the same document
 (docs/DATA_NOTES.md, "M8"). Stage 4 (v3 §6) starts from a clean register and a fresh
 discovery set.
+
+## Stage 4 (PRD v3 §6, copied verbatim before M9's discovery command runs)
+
+### 6.1 Data sets and disclosure
+
+| Set | Months | Prior exposure | Role |
+| --- | --- | --- | --- |
+| **D** (discovery) | 2025-07 … 2025-12 | none | discovery |
+| **D** (discovery) | 2026-02 … 2026-05 | fresh samples of months whose 400-market samples were used in M7 | discovery, disclosed |
+| **C1** (confirmation, disclosed) | 2026-06 … 2026-08 | fresh samples of months used in M6/M7 holdouts | first confirmation |
+| **C2** (confirmation, untouched) | 2026-01, 2026-09, 2026-10 | none; 2026-10 fetched once its markets resolve (mid-November) | final confirmation |
+
+Fresh samples of previously used months are new markets but the same regime; that is why C2
+exists and why C2 alone carries the word "confirmed".
+
+### 6.2 Verdicts
+
+- **Confirmed:** clears D by the study's selection rule; on C1 and on C2 separately, `E[r]`
+  under CURRENT fees > 0 with the wider cluster 90% CI above zero and the sign positive in ≥
+  2/3 of each set's months; Conservative preset also positive pooled over C1 ∪ C2; capacity ≥
+  $50/month at $1,000; then one paper-trading month (§10) within the backtest's 90% interval.
+- **Promising / unconfirmed:** clears D and C1 but not C2, or C2 pooled positive with a CI
+  spanning zero. Added to the app as an example with the record and the word "unconfirmed".
+- **Rejected:** otherwise. Reported with MDE.
+
+### 6.3 Multiple comparisons
+
+The register counts every primary cell, rule, wallet variant and scan variant. Cell-wise
+selection in S1/S2 uses BH at 10% FDR. Every study's report states N from the register, the
+expected best-of-N by chance from the stored permutation variants, and how often chance beats
+the actual best. No configuration is changed after registration; extensions are new register
+rows with their own accounting.
+
+### 6.4 What this cannot show
+
+Sixteen months across two years is still one platform in one era. A confirmed edge is a
+reason to paper trade, not to risk money; a confirmed edge with capacity of $50/month is a
+finding about the market, not an income.
+
+### Registrations
+
+S1 (`research/studies/s1_calibration/registration.yaml`) and S2
+(`research/studies/s2_deadline_decay/registration.yaml`) were committed on 2026-09-15 before
+the first census month was sampled; their register rows (study, cells, rules) are in
+`docs/research/REGISTER.md`. The 2025-07 census is the first data of Stage 4.

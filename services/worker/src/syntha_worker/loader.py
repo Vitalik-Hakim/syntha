@@ -16,6 +16,7 @@ import itertools
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -36,9 +37,11 @@ from syntha_engine.data import (
 
 log = logging.getLogger(__name__)
 
-# v3 §4.2 catch-all detection, M8 text rule (D2 in M11 replaces it with event-level parsing):
-# a neg-risk market whose question is the residual outcome. Conservative on purpose: a false
-# "catch-all present" would let a basket treat a non-exhaustive set as exhaustive.
+# v3 §4.2 catch-all *candidates*: a neg-risk market whose question reads like the residual
+# outcome, or one Gamma flags as `negRiskOther`. Candidates are listed for review by
+# tools/research/catch_all_review.py; only a reviewed verdict (catch_all_reviews) reaches the
+# engine (M9 decision, docs/DECISIONS.md). A false "catch-all present" would let a basket treat a
+# non-exhaustive set as exhaustive, so nothing is inferred automatically.
 CATCH_ALL = re.compile(
     r"^\s*(other|another|someone else|anyone else|none of the above|no one|nobody)\b"
     r"|\bwill (another|any other|some other|someone else|anyone else|no one|nobody)\b"
@@ -47,11 +50,12 @@ CATCH_ALL = re.compile(
 )
 
 
-def is_catch_all_question(question: str | None, neg_risk: bool | None) -> bool | None:
-    """None when it cannot be known (no question, or not a neg-risk market)."""
-    if question is None or not neg_risk:
-        return None
-    return bool(CATCH_ALL.search(question))
+def is_catch_all_candidate(
+    question: str | None, neg_risk: bool | None, neg_risk_other: bool | None
+) -> bool:
+    if not neg_risk:
+        return False
+    return bool(neg_risk_other) or bool(question and CATCH_ALL.search(question))
 
 
 @dataclass(frozen=True)
@@ -91,6 +95,24 @@ def _split(df: pl.DataFrame, cols: list[str], names: list[str]) -> dict[str, dic
     for a, b in itertools.pairwise(bounds):
         out[names[int(tokens[a]) - 1]] = {c: arrays[c][a:b].copy() for c in cols}
     return out
+
+
+def coverage_window(
+    selection: dict[str, Any] | None, start: Any, end: Any
+) -> tuple[int, int] | None:
+    """The collection's scheduled-end window, narrowed by an explicit request window (M9
+    decision: capacity per month is measured over it). None without a collection window."""
+    if not selection or not selection.get("end_date_min") or not selection.get("end_date_max"):
+        return None
+    lo = datetime.fromisoformat(str(selection["end_date_min"]).replace("Z", "+00:00"))
+    hi = datetime.fromisoformat(str(selection["end_date_max"]).replace("Z", "+00:00"))
+    if start is not None:
+        lo = max(lo, start)
+    if end is not None:
+        hi = min(hi, end)
+    if hi <= lo:
+        return None
+    return int(lo.timestamp()), int(hi.timestamp())
 
 
 def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
@@ -133,8 +155,11 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
         rows = conn.execute(
             "SELECT m.condition_id, m.event_id, m.category, m.tick_size, m.min_order_size, m.created_at, "
             "m.open_ts, m.end_date, m.fees_enabled, m.fee_type, m.fee_rate, m.fee_exponent, "
-            "m.resolution, m.resolved_at, m.closed_time, m.neg_risk, m.question "
-            + market_filter
+            "m.resolution, m.resolved_at, m.closed_time, m.neg_risk, r.is_catch_all "
+            + market_filter.replace(
+                "FROM markets m",
+                "FROM markets m LEFT JOIN catch_all_reviews r ON r.condition_id = m.condition_id",
+            )
             + " ORDER BY m.condition_id",
             params,
         ).fetchall()
@@ -155,7 +180,7 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
                 fee_rate=None if r[10] is None else Decimal(r[10]),
                 fee_exponent=r[11],
                 neg_risk=r[15],
-                is_catch_all=is_catch_all_question(r[16], r[15]),
+                is_catch_all=r[16],  # a reviewed verdict or None; never inferred here
             )
             # ENGINE-RESTRICTED columns go only to settlement.
             settlements[r[0]] = Settlement(r[12] or "UNRESOLVED", _epoch(r[13]), _epoch(r[14]))
@@ -265,6 +290,7 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
         dataset_version_id=None if version is None else str(version[0]),
         selection=selection,
         wallets=wallet_names,
+        coverage=coverage_window(selection, sel.start, sel.end),
     )
     return LoadedDataset(
         dataset, SettlementTable(settlements), None if version is None else version[1]

@@ -555,6 +555,91 @@ Raw numbers: `data/research/m8-rerun-00041.json`.
   false "catch-all present" would let a basket treat a non-exhaustive set as exhaustive. D2
   (M11) replaces it with event-level parsing; `EventView.catch_all_present` is the only consumer.
 
+## M9 prep — PRD v3 Appendix B probes and the three decisions — 2026-09-15
+
+### Appendix B probes (live, 2026-09-15)
+
+- **Gamma listing per month.** `GET /markets?closed=true&end_date_min=2025-07-01T00:00:00Z&
+  end_date_max=2025-07-31T23:59:59Z` works for 2025 (offset and keyset paging both; `order=
+  volumeNum` for probes only). A keyset page of the July-2025 frame: 100 markets, **99 with
+  `feeType: null`** (the fee-free era) and 59 `negRisk: true`; the embedded `events[0]` object
+  carries `id`, `slug`, `ticker`, `title`, dates, `negRiskAugmented` and volumes, but **no
+  `tags` and no market list**. `GET /events/{id}` returns `tags` (slugs and labels) and the
+  event's `markets`. Consequence: category for 2025 markets comes from event tags, so the census
+  sampler fetches every event of the frame (one call each) before it allocates; structure
+  (`sibling` = event with ≥ 3 markets) uses the same object.
+- **`negRiskOther`** is a Gamma market field (True for 1 of the 100 listed July-2025 markets;
+  False for all five Fed-decision markets of 2026, an event without a residual market). It is
+  Polymarket's own flag for the neg-risk "Other" market and is stored as `markets.neg_risk_other`
+  at the next rebuild. It makes a market a catch-all *candidate*; the M9 decision below requires
+  a review before the engine treats it as one.
+- **`/markets/{id}` batches and `closed`:** unchanged from M1 (`?id=A&id=B…`, both states);
+  `?condition_ids=A&condition_ids=B` (M8) also works for 2025 markets.
+- **CLOB `prices-history` for a 2025 market (June 2025, checked at July's first listed
+  market):** `fidelity=60` over 15 days → 360 hourly points (200); 16 and 30 days → `"'startTs'
+  and 'endTs' interval is too long"`; `fidelity=1` over 1 day → 1,440 points and over 15 days →
+  21,598 points, so **1-minute history is still served for 2025**; `interval=max&fidelity=60` →
+  empty. The census uses `[end − 15 d, end]` at fidelity 60 and `[end − 6 h, end]` at fidelity 1
+  for intraday and ultra-short markets.
+- **Data `/v2/trades?condition=`:** the busiest July-2025 market (Fed +25 bps, $43.5M) returned
+  12 pages × 1,000 prints in 9.8 s with `has_more` still true; page 12's earliest print was
+  2025-07-14 for a market ending 2025-07-30, i.e. 16 days of prints in 12 pages on the busiest
+  market of the month. `pagination` = `{limit, offset, has_more, next_cursor}`. The census walks
+  newest-first until the page's earliest print is older than `end − 8 d` or 10 pages, and marks
+  the market `prints_truncated` when the cap hit first (liquidity tiers then stay null where
+  the window is uncovered).
+- **`/v2/trades?user=`** exists: 35 rows for one wallet across several markets, and combined
+  with `condition=` it filters both ways. **D3 (M10) can use v2 directly**; the v1 fallbacks also
+  answered: `GET /activity?user=&type=TRADE` (camelCase rows with `usdcSize`, `transactionHash`,
+  `proxyWallet`), `GET /positions?user=` (rows with `avgPrice`, `curPrice`, `cashPnl`,
+  `realizedPnl`, `percentPnl`, `redeemable`, `mergeable`, `negativeRisk`, `oppositeAsset`) and
+  v1 `GET /trades?user=` (camelCase, 10,000-offset cap per M1).
+- **`/v2/resolutions`** for 20 July-2025 markets: 20 rows, all in the UMA `price` shape with
+  `last_update_timestamp` as an RFC3339 string; no `payouts` rows in this batch. Both shapes are
+  still parsed (M1 normalizer).
+- **Websocket** `last_trade_price` with `fee_rate_bps`: verified in M8 (above).
+- **Kalshi:** not probed (S6 is optional and starts at M13 at the earliest).
+
+### Census (`syntha-ingest census-*`, PRD v3 §4.1)
+
+- Metadata is taken from the listing pages themselves (they carry the full market object with
+  `events[0].id`); the per-id refetch of M1 is not repeated. Events are fetched once per frame
+  for tags and sibling counts.
+- Offsets: `−7d −3d −24h −6h −1h −15m` from the scheduled end, `+1h +24h` from the open,
+  skipped outside the market's life (open … min(closedTime, end)).
+- `fill_10m` / `fill_30m`: VWAP of taker-BUY prints on the token in `[ts, ts + window)` at
+  ≤ `mid + 1 tick`; null when none, or when the print walk did not cover `ts`.
+  `liq_24h`: taker-BUY notional in `[ts − 24h, ts]`, null unless the walk covered the window.
+  `staleness_minutes`: minutes since the last print at or before `ts` (null when unknown).
+- `fee_entry`: HISTORICAL schedule via the engine's fee module (2025 → 0);
+  `fee_entry_current`: the fee a 1-share fill would pay **today** in the market's category
+  (the category's latest schedule from the fee seed; categories without a schedule pay 0). This
+  is the CURRENT-fee counterfactual v3 §4.6 asks for on fee-free months.
+- `payout` is written from the resolution path (Gamma/chain agreement rule) after the feature
+  columns, and is tagged engine-restricted like `markets.resolution`.
+- Determinism: the build reads raw records in (fetched_at, page) order, later fetches win,
+  rows are written in (condition, token, offset) order, and `census_runs.content_hash` covers
+  `census_markets` and `census_observations` for the census id; `census-verify` recomputes it.
+- Census price records share the CLOB endpoint directory with 1-minute bar fetches; they carry
+  `fidelity` in their unit and `bar_lines` ignores anything but fidelity 1.
+
+### The three M9 decisions (product owner, 2026-09-15)
+
+- **Capacity denominator = the collection's coverage window** (`Dataset.coverage`, from the
+  collection's `end_date_min/max`, narrowed by an explicit request window). The M8 signal-span
+  denominator remains the fallback only for datasets without a window (fixtures), and the
+  stored metric names which one was used.
+- **Baskets are refused on final-volume-filtered collections.** `create_run` (API 422) and
+  `prepare` (ValueError) both refuse a basket strategy whose collection manifest carries
+  `selection_uses_final_volume`: such a collection is missing the siblings that stayed thin, so
+  no set identity can be checked. Ordinary strategies keep the existing bias warning.
+- **Catch-all requires review.** The loader no longer infers `is_catch_all`; it reads
+  `catch_all_reviews` (durable across rebuilds) and passes `None` otherwise, so
+  `EventView.catch_all_present` is false until a person has reviewed the market.
+  `tools/research/catch_all_review.py list` shows candidates (`negRiskOther` or the text rule),
+  `set` records a verdict, `export`/`import` keep `docs/research/catch_all_reviews.json` in the
+  repo.
+
 ## Schema
 
 ### trade_prints primary key is `(id, ts)`, not `(id)` — resolved (M0)

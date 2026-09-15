@@ -11,6 +11,7 @@ from dataclasses import asdict, replace
 
 import psycopg
 
+from syntha_ingestion import census
 from syntha_ingestion.config import IngestSettings, psycopg_url
 from syntha_ingestion.fetch import fetch_collection, sample_collection
 from syntha_ingestion.normalize import rebuild, verify
@@ -126,6 +127,67 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_census_sample(args: argparse.Namespace) -> int:
+    manifest = asyncio.run(
+        census.sample_census(
+            _settings(args),
+            month=args.month,
+            seed=args.seed,
+            per_stratum=args.per_stratum,
+            ultra_short_cap=args.ultra_short_cap,
+            concurrency=args.concurrency,
+        )
+    )
+    print(
+        json.dumps(
+            {"name": manifest["name"], "markets": len(manifest["markets"]), **manifest["frame"]},
+            indent=2,
+        )
+    )
+    return 0
+
+
+def cmd_census_fetch(args: argparse.Namespace) -> int:
+    report = asyncio.run(
+        census.fetch_census(_settings(args), args.month, concurrency=args.concurrency)
+    )
+    print(json.dumps(asdict(report), indent=2))
+    if report.units_failed:
+        print(
+            f"{report.units_failed} units failed; see data/checkpoints/census-{args.month}"
+            ".failures.jsonl. Re-run census-fetch to retry them.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def cmd_census_build(args: argparse.Namespace) -> int:
+    result = census.build_census(_settings(args), args.month)
+    print(
+        json.dumps(
+            {
+                "census_id": result.census_id,
+                "content_hash": result.content_hash,
+                "n_markets": result.n_markets,
+                "n_observations": result.n_observations,
+                "quality": {k: v for k, v in result.quality.items() if k != "markets_dropped"},
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def cmd_census_verify(args: argparse.Namespace) -> int:
+    current, recorded = census.verify_census(_settings(args), args.month)
+    print(json.dumps({"current_hash": current, "recorded_hash": recorded}, indent=2))
+    if current != recorded:
+        print("census tables do not match the recorded build", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -171,6 +233,27 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("report", help="print the latest data-quality report")
     r.add_argument("--full", action="store_true", help="include every dropped market and anomaly")
     r.set_defaults(func=cmd_report)
+
+    # --- calibration census (PRD v3 §4.1)
+    cs = sub.add_parser("census-sample", help="list a month, fetch its events, draw the census")
+    cs.add_argument("--month", required=True, help="YYYY-MM, e.g. 2025-07")
+    cs.add_argument("--seed", type=int, required=True)
+    cs.add_argument("--per-stratum", type=int, default=census.PER_STRATUM)
+    cs.add_argument("--ultra-short-cap", type=int, default=census.ULTRA_SHORT_CAP)
+    cs.add_argument("--concurrency", type=int)
+    cs.set_defaults(func=cmd_census_sample)
+    cf = sub.add_parser(
+        "census-fetch", help="fetch prices, prints and resolutions for a census (resumable)"
+    )
+    cf.add_argument("--month", required=True)
+    cf.add_argument("--concurrency", type=int)
+    cf.set_defaults(func=cmd_census_fetch)
+    cb = sub.add_parser("census-build", help="build census_* tables from raw/ and hash them")
+    cb.add_argument("--month", required=True)
+    cb.set_defaults(func=cmd_census_build)
+    cv = sub.add_parser("census-verify", help="recompute the census hash and compare")
+    cv.add_argument("--month", required=True)
+    cv.set_defaults(func=cmd_census_verify)
 
     args = p.parse_args(argv)
     code: int = args.func(args)

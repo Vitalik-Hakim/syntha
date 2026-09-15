@@ -22,6 +22,10 @@ def test_every_prd_table_is_mapped() -> None:
         "bt_ledger",
         "bt_near_misses",
         "recorder_watchlist",  # PRD v3 E7
+        "catch_all_reviews",  # M9 decision: catch-alls need review
+        "census_runs",  # PRD v3 D1
+        "census_markets",
+        "census_observations",
     }
 
 
@@ -38,6 +42,7 @@ def test_engine_restricted_columns_are_tagged() -> None:
         ("markets", "resolution"),
         ("markets", "final_volume"),
         ("markets", "closed_time"),
+        ("census_observations", "payout"),  # v3 §4.1: settlement path only
     }
 
 

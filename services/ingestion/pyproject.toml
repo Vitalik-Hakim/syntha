@@ -7,6 +7,7 @@ dependencies = [
   "httpx>=0.27",
   "psycopg[binary]>=3.2",
   "syntha-contracts",
+  "syntha-engine",
   "syntha-storage",
 ]
 
@@ -15,6 +16,7 @@ syntha-ingest = "syntha_ingestion.cli:main"
 
 [tool.uv.sources]
 syntha-contracts = { workspace = true }
+syntha-engine = { workspace = true }
 syntha-storage = { workspace = true }
 
 [build-system]

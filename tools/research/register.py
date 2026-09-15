@@ -9,6 +9,7 @@ Usage:
   uv run python tools/research/register.py add --study S --family F --data-seen "..." FILE...
   uv run python tools/research/register.py add-grid --study S --grid 1|2|both --data-seen "..."
   uv run python tools/research/register.py import-sweeps --data-seen "..."   # retro-register
+  uv run python tools/research/register.py add-registration research/studies/<id>/registration.yaml
   uv run python tools/research/register.py set --id R-0007 --status done --result "..."
   uv run python tools/research/register.py list [--study S]
   uv run python tools/research/register.py check FILE...   # exit 1 if any is unregistered
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -25,6 +27,8 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 REGISTER = ROOT / "docs" / "research" / "REGISTER.md"
@@ -52,7 +56,9 @@ Rows are appended by `tools/research/register.py`; never edit results by hand.
 
 
 def definition_hash(definition: Any) -> str:
-    text = json.dumps(definition, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    text = json.dumps(
+        definition, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+    )
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
@@ -172,6 +178,37 @@ def require_registered(definitions: list[tuple[str, Any]]) -> None:
         )
 
 
+# ------------------------------------------------------------------ registrations (v3 §7.6)
+
+
+def primary_cells(registration: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every primary cell a registration tests, as a definition dict per cell. `primary_cells`
+    in the YAML names the dimensions; their values come from `cell_dimensions`."""
+    dims = registration.get("cell_dimensions") or {}
+    names = [d.strip() for d in str(registration.get("primary_cells", "")).split("x") if d.strip()]
+    values = [dims[n] for n in names]
+    return [
+        {"study": registration["study"], "cell": dict(zip(names, combo, strict=True))}
+        for combo in itertools.product(*values)
+    ]
+
+
+def add_registration(path: Path) -> tuple[dict[str, str], int]:
+    """Register a study: one row for the registration itself and one per primary cell, plus one
+    per extra `registered_rules` entry. Idempotent by hash. Returns (study row, rows added)."""
+    reg = yaml.safe_load(path.read_text())
+    study = str(reg["study"])
+    seen = reg.get("data_seen_before_registration", "")
+    seen_text = "; ".join(str(s) for s in seen) if isinstance(seen, list) else str(seen)
+    before = len(load())
+    study_row = add(study, study, {"registration": reg}, seen_text, "registered", "")
+    for cell in primary_cells(reg):
+        add(study, f"{study}:cells", cell, seen_text, "registered", "")
+    for rule in reg.get("registered_rules") or []:
+        add(study, f"{study}:{rule.get('family', 'rules')}", rule, seen_text, "registered", "")
+    return study_row, len(load()) - before
+
+
 # ------------------------------------------------------------------ CLI
 
 
@@ -206,6 +243,9 @@ def main() -> None:
     p = sub.add_parser("import-sweeps", help="retro-register everything a past sweep ran")
     p.add_argument("--data-seen", required=True)
     p.add_argument("--result", default="see docs/RESEARCH_PROTOCOL.md")
+
+    p = sub.add_parser("add-registration", help="register a study from its registration.yaml")
+    p.add_argument("path")
 
     p = sub.add_parser("set", help="update a row's status/result")
     p.add_argument("--id", required=True)
@@ -248,6 +288,11 @@ def main() -> None:
                     args.result,
                 )
                 print(row["id"], row["definition_hash"], grid_path.parent.name, cfg["key"])
+    elif args.cmd == "add-registration":
+        row, n = add_registration(Path(args.path))
+        print(
+            f"{row['id']} {row['study']}: {n} new row(s); {family_counts().get(row['study'] + ':cells', 0)} primary cells"
+        )
     elif args.cmd == "set":
         row = set_status(args.id, args.status, args.result)
         print(json.dumps(row, indent=1))

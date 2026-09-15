@@ -218,3 +218,44 @@ def test_metrics_and_honesty_carry_the_e5_fields() -> None:
     assert "CURRENT" in h["fee_counterfactual"]
     attached = H.honesty_metrics(h)
     assert {"mde_80", "cluster_ci90", "fee_counterfactual"} <= set(attached)
+
+
+# ------------------------------------------------------------------ M9 decisions
+
+
+def test_capacity_months_come_from_the_collection_coverage_window() -> None:
+    ds, st = _event_dataset(neg_risk=True, catch_all_listed_at=0)
+    windowed = Dataset(ds.markets, ds.tokens, coverage=(T0, T0 + 61 * 86_400))
+    result = _run(_basket_request(), windowed, st)
+    cap = result.metrics["capacity"]
+    assert cap["months"] == pytest.approx(61 / 30.4375)
+    assert cap["denominator"] == "collection coverage window"
+    fallback = _run(_basket_request(), ds, st).metrics["capacity"]
+    assert fallback["denominator"].startswith("signal span") and fallback["months"] == 1 / 30.4375
+
+
+def test_baskets_are_refused_on_final_volume_filtered_collections() -> None:
+    ds, st = _event_dataset(neg_risk=True, catch_all_listed_at=0)
+    filtered = Dataset(
+        ds.markets,
+        ds.tokens,
+        selection={"selection_uses_final_volume": {"min_lifetime_volume": 10000.0}},
+    )
+    with pytest.raises(ValueError, match="refused on a collection selected by final volume"):
+        prepare(_basket_request(), filtered, st)
+    # an ordinary strategy on the same collection is only warned, never refused
+    plain = BacktestRequest.model_validate(
+        {
+            "strategy": {
+                "name": "plain",
+                "entry": {"all": [{"feature": "price", "op": "lte", "value": 0.5}]},
+                "sizing": {"mode": "FIXED_CASH", "value": 5},
+            },
+            "execution": {
+                "model": "LAST_PRICE",
+                "slippage_ticks": 0,
+                "liquidity_participation": None,
+            },
+        }
+    )
+    assert prepare(plain, filtered, st) is not None

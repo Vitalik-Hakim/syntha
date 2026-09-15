@@ -26,7 +26,7 @@ from syntha_contracts.strategy import StrategyDSL
 from syntha_engine import ENGINE_VERSION
 from syntha_engine.data import Dataset, SettlementTable
 from syntha_engine.honesty import compute_honesty, honesty_metrics
-from syntha_engine.runner import BacktestResult, prepare, simulate
+from syntha_engine.runner import BacktestResult, basket_refusal, prepare, simulate
 from syntha_engine.strategy.compiler import compile_strategy
 from syntha_worker.loader import LoadedDataset, load_dataset
 
@@ -37,6 +37,11 @@ PROGRESS_TTL_S = 86_400
 
 class NoDatasetVersion(RuntimeError):
     """There is no dataset version to run against; `make rebuild-normalized` first."""
+
+
+class RefusedRequest(ValueError):
+    """The request is valid but must not run on this data (e.g. a basket strategy on a
+    final-volume-filtered collection; M9 decision, docs/DECISIONS.md)."""
 
 
 def plain_url(url: str) -> str:
@@ -113,7 +118,16 @@ def create_run(
 ) -> str:
     """Validate and insert a QUEUED run. Returns its id (BT-YYYYMMDD-NNNNN). Runs of one "run all
     three presets" request share `group_id`."""
-    compile_strategy(request.strategy, request.bar_interval_minutes)  # raises on invalid features
+    strat = compile_strategy(
+        request.strategy, request.bar_interval_minutes
+    )  # raises on bad features
+    if strat.uses_basket and request.dataset.collection is not None:
+        row = conn.execute(
+            "SELECT definition FROM collections WHERE name = %s", (request.dataset.collection,)
+        ).fetchone()
+        refusal = basket_refusal((row[0] or {}).get("definition") if row else None)
+        if refusal:
+            raise RefusedRequest(refusal)
     dataset = conn.execute(
         "SELECT id FROM dataset_versions ORDER BY built_at DESC LIMIT 1"
     ).fetchone()

@@ -165,6 +165,24 @@ def price_windows(start_ts: int, end_ts: int) -> list[tuple[int, int]]:
     return windows
 
 
+async def fetch_price_history(
+    client: ApiClient, token_id: str, start_ts: int, end_ts: int, fidelity: int
+) -> int:
+    """Price samples at `fidelity` minutes for one token and window (v3 D1 census: 60, and 1 for
+    the last six hours of short markets). The unit records the fidelity so normalization can tell
+    these records from 1-minute bar fetches. Returns the number of points."""
+    params = {"market": token_id, "startTs": start_ts, "endTs": end_ts, "fidelity": fidelity}
+    unit = {
+        "kind": "prices",
+        "token": token_id,
+        "start": start_ts,
+        "end": end_ts,
+        "fidelity": fidelity,
+    }
+    _, body = await client.get(CLOB_PRICES_HISTORY, f"{CLOB_URL}/prices-history", params, unit)
+    return len(body.get("history") or [])
+
+
 async def fetch_price_window(client: ApiClient, token_id: str, start_ts: int, end_ts: int) -> int:
     """1-minute price samples for one token and window. Returns the number of points."""
     params = {"market": token_id, "startTs": start_ts, "endTs": end_ts, "fidelity": 1}
@@ -191,6 +209,35 @@ async def walk_trades(client: ApiClient, condition_id: str) -> int:
         page += 1
         if not cursor:
             return total
+
+
+async def walk_trades_window(
+    client: ApiClient, condition_id: str, *, stop_before_ts: int, max_pages: int
+) -> dict[str, Any]:
+    """Newest-first prints until the page's earliest print is older than `stop_before_ts` or
+    `max_pages` pages were fetched (v3 D1). Returns prints, pages, earliest timestamp and whether
+    the cap cut the walk short (`truncated`); truncated markets get null liquidity tiers for the
+    offsets the prints do not cover, never a guess."""
+    cursor: str | None = None
+    page = 0
+    total = 0
+    earliest: int | None = None
+    while True:
+        params = {"condition": condition_id, "limit": 1000, "cursor": cursor}
+        unit = {"kind": "trades", "condition": condition_id, "page": page}
+        _, body = await client.get(DATA_V2_TRADES, f"{DATA_URL}/v2/trades", params, unit)
+        rows = body.get("data") or []
+        total += len(rows)
+        page += 1
+        if rows:
+            earliest = min(int(r["timestamp"]) for r in rows)
+        cursor = (body.get("pagination") or {}).get("next_cursor")
+        if not cursor or not rows:
+            return {"prints": total, "pages": page, "earliest": earliest, "truncated": False}
+        if earliest is not None and earliest < stop_before_ts:
+            return {"prints": total, "pages": page, "earliest": earliest, "truncated": False}
+        if page >= max_pages:
+            return {"prints": total, "pages": page, "earliest": earliest, "truncated": True}
 
 
 def resolution_batches(condition_ids: Sequence[str]) -> list[list[str]]:

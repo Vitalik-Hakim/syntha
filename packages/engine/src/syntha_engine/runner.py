@@ -247,6 +247,21 @@ def _side_of(outcome_index: int) -> str:
     return Side.BUY_YES.value if outcome_index == 0 else Side.BUY_NO.value
 
 
+def basket_refusal(selection: dict[str, Any] | None) -> str | None:
+    """M9 decision: a basket needs every sibling of an event, and a collection selected by final
+    volume keeps only the siblings that ended up liquid. On such a collection a "set" is a
+    survivorship artefact, so basket strategies are refused outright rather than run."""
+    used = (selection or {}).get("selection_uses_final_volume")
+    if not used:
+        return None
+    return (
+        "basket strategies are refused on a collection selected by final volume "
+        f"(min_lifetime_volume {used.get('min_lifetime_volume')}): its events are missing the "
+        "siblings that stayed thin, so no set identity can be checked. Use an event-complete or "
+        "unfiltered collection."
+    )
+
+
 def _print_trigger(
     frame: TokenFrame, side: str, min_notional: float, allowed: set[int] | None
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -320,6 +335,10 @@ def prepare(
     strat: Strategy = strategy or compile_strategy(request.strategy, step_min)
     universe = request.strategy.universe
     q = _Quality()
+    if isinstance(strat, DSLStrategy) and strat.uses_basket:
+        refusal = basket_refusal(dataset.selection)
+        if refusal:
+            raise ValueError(refusal)
 
     # ------------------------------------------------------------ universe (static part)
     wanted = sorted(dataset.markets)
@@ -1605,26 +1624,36 @@ def _basket_execution(legs: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _capacity(trades: list[dict[str, Any]], request: BacktestRequest) -> dict[str, Any]:
+def _capacity(
+    trades: list[dict[str, Any]], request: BacktestRequest, coverage: tuple[int, int] | None
+) -> dict[str, Any]:
     """v3 E5 capacity: per signal, min(requested notional, participation × same-side print
-    notional in the fill bar), summed per month of the signal span (first signal to last
-    attempt; at least one day), at $1,000 and $10,000 starting capital. Sizing modes that scale
-    with capital scale the request; fixed-cash sizing does not."""
+    notional in the fill bar), summed per month of the collection's coverage window (M9
+    decision; the signal span, at least one day, when the dataset has no window), at $1,000 and
+    $10,000 starting capital. Sizing modes that scale with capital scale the request; fixed-cash
+    sizing does not."""
     sizing = request.strategy.sizing
     part = request.execution.liquidity_participation
     scales = sizing.mode in (SizingMode.PCT_OF_EQUITY, SizingMode.PCT_OF_INITIAL)
     cap_per_trade = sizing.max_notional_per_trade
     rows = [t for t in trades if t.get("basket_role") != "LEG"]
-    stamps = [_from_iso(t["signal_ts"]) for t in rows] + [_from_iso(t["entry_ts"]) for t in rows]
-    span_days = (max(stamps) - min(stamps)) / 86_400 if stamps else 0.0
+    if coverage is not None:
+        span_days = (coverage[1] - coverage[0]) / 86_400
+        denominator = "collection coverage window"
+    else:
+        stamps = [_from_iso(t["signal_ts"]) for t in rows]
+        stamps += [_from_iso(t["entry_ts"]) for t in rows]
+        span_days = (max(stamps) - min(stamps)) / 86_400 if stamps else 0.0
+        denominator = "signal span (no coverage window on this dataset)"
     months = max(span_days, 1.0) / 30.4375
     out: dict[str, Any] = {
         "signals": len(rows),
         "months": months,
+        "denominator": denominator,
         "participation": part,
         "method": "Σ over signals of min(requested notional, participation × same-side print "
-        "notional in the fill bar), per month of the signal span; requests under PCT sizing "
-        "scale with capital",
+        "notional in the fill bar), per month of the collection coverage window; requests under "
+        "PCT sizing scale with capital",
     }
     for capital in (1000, 10000):
         captured = 0.0
@@ -2100,7 +2129,7 @@ def _build_result(
         execution_model=request.execution.model.value,
         fee_mode=request.fees.mode.value,
         extra_warnings=bias_warnings,
-        capacity=_capacity(trades, request),
+        capacity=_capacity(trades, request, dataset.coverage),
     )
     c = q.counters
     bars_total = c["bars_total"]

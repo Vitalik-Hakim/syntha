@@ -92,6 +92,23 @@ class Market(Base):
     resolution: Mapped[str | None] = mapped_column(Text, info=_RESTRICTED)
     final_volume: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), info=_RESTRICTED)
     ingested_at: Mapped[datetime] = mapped_column(TSTZ)
+    # v3 D4 subset: BY | ON | NONE from the question text (syntha_ingestion.parse.deadline_type)
+    deadline_type: Mapped[str | None] = mapped_column(Text)
+    # Gamma `negRiskOther`: the neg-risk event's residual ("Other") market. A catch-all candidate;
+    # it counts as a catch-all only after review (catch_all_reviews).
+    neg_risk_other: Mapped[bool | None] = mapped_column(Boolean)
+
+
+class CatchAllReview(Base):
+    """A person's verdict on whether a market is its event's catch-all (v3 §4.2). Durable across
+    rebuilds; the loader trusts nothing else."""
+
+    __tablename__ = "catch_all_reviews"
+
+    condition_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    is_catch_all: Mapped[bool] = mapped_column(Boolean)
+    reviewed_at: Mapped[datetime] = mapped_column(TSTZ)
+    note: Mapped[str | None] = mapped_column(Text)
 
 
 class Outcome(Base):
@@ -397,6 +414,68 @@ class BtNearMiss(Base):
     failed_clauses: Mapped[int] = mapped_column(Integer)
     blocked_by: Mapped[str | None] = mapped_column(Text)
     trace: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+# ------------------------------------------------------------------ calibration census (v3 D1)
+
+
+class CensusRun(Base):
+    """One build of one census month; `content_hash` covers its census rows, so a rebuild from
+    the same raw data is verifiable bit for bit."""
+
+    __tablename__ = "census_runs"
+
+    census_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    built_at: Mapped[datetime] = mapped_column(TSTZ)
+    content_hash: Mapped[str] = mapped_column(Text)
+    n_markets: Mapped[int] = mapped_column(Integer)
+    n_observations: Mapped[int] = mapped_column(Integer)
+    manifest: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    quality: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+
+class CensusMarket(Base):
+    __tablename__ = "census_markets"
+
+    census_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    condition_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    event_id: Mapped[str | None] = mapped_column(Text)
+    category: Mapped[str | None] = mapped_column(Text)
+    duration_class: Mapped[str | None] = mapped_column(Text)
+    structure: Mapped[str | None] = mapped_column(Text)  # binary | sibling
+    deadline_type: Mapped[str | None] = mapped_column(Text)  # BY | ON | NONE
+    n_outcomes: Mapped[int | None] = mapped_column(Integer)
+    prints_truncated: Mapped[bool | None] = mapped_column(Boolean)
+    resolution: Mapped[str | None] = mapped_column(Text)
+    neg_risk: Mapped[bool | None] = mapped_column(Boolean)
+    open_ts: Mapped[datetime | None] = mapped_column(TSTZ)
+    end_ts: Mapped[datetime | None] = mapped_column(TSTZ)
+    tick_size: Mapped[Decimal | None] = mapped_column(PRICE)
+
+
+class CensusObservation(Base):
+    """One (market, token, offset) of the census (v3 §4.1). `payout` comes from the settlement
+    path only; study code that builds features never reads it."""
+
+    __tablename__ = "census_observations"
+    __table_args__ = (Index(None, "census_id", "condition_id"),)
+
+    census_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    condition_id: Mapped[str] = mapped_column(Text)
+    clob_token_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    event_id: Mapped[str | None] = mapped_column(Text)
+    outcome_index: Mapped[int] = mapped_column(Integer)
+    offset_label: Mapped[str] = mapped_column(Text, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(TSTZ)
+    mid: Mapped[Decimal | None] = mapped_column(PRICE)
+    staleness_minutes: Mapped[int | None] = mapped_column(Integer)
+    fill_10m: Mapped[Decimal | None] = mapped_column(PRICE)
+    fill_30m: Mapped[Decimal | None] = mapped_column(PRICE)
+    fill_size_10m: Mapped[Decimal | None] = mapped_column(MONEY)
+    liq_24h: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    fee_entry: Mapped[Decimal | None] = mapped_column(MONEY)
+    fee_entry_current: Mapped[Decimal | None] = mapped_column(MONEY)
+    payout: Mapped[Decimal | None] = mapped_column(PRICE, info=_RESTRICTED)
 
 
 class BtLedger(Base):

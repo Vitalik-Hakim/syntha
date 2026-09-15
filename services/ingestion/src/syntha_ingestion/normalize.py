@@ -30,8 +30,10 @@ import psycopg
 from syntha_ingestion import polymarket as pm
 from syntha_ingestion.config import IngestSettings, psycopg_url
 from syntha_ingestion.parse import (
-    fee_category,
+    TAG_CATEGORIES,
+    deadline_type,
     json_list,
+    market_category,
     open_ts,
     parse_ts,
     print_key,
@@ -55,18 +57,7 @@ NORMALIZED_TABLES: tuple[tuple[str, str], ...] = (
     ("price_bars", "clob_token_id, ts"),
 )
 
-TAG_CATEGORIES = (
-    "geopolitics",
-    "politics",
-    "sports",
-    "crypto",
-    "finance",
-    "economics",
-    "culture",
-    "weather",
-    "tech",
-    "mentions",
-)
+__all__ = ["TAG_CATEGORIES"]  # re-exported for callers that used it from here
 
 _COPY_CHUNK = 1 << 20
 
@@ -172,15 +163,6 @@ def collection_rows(
     return collections, members, market_ids
 
 
-def _category(gamma: dict[str, Any], event_tags: list[str]) -> str | None:
-    if gamma.get("feeType"):
-        return fee_category(gamma["feeType"])
-    for cat in TAG_CATEGORIES:
-        if cat in event_tags:
-            return cat
-    return None
-
-
 @dataclass
 class MarketBuild:
     events: list[tuple[Any, ...]]
@@ -269,7 +251,7 @@ def market_rows(raw: RawStore, wanted: dict[str, str], build: BuildLog) -> Marke
                 g.get("questionID"),
                 g.get("slug") or "",
                 g.get("question") or "",
-                _category(g, event_tags.get(event_id or "", [])),
+                market_category(g.get("feeType"), event_tags.get(event_id or "", [])),
                 bool(g.get("negRisk")),
                 _dec(g["orderPriceMinTickSize"]),
                 _dec(g.get("orderMinSize")),
@@ -285,6 +267,8 @@ def market_rows(raw: RawStore, wanted: dict[str, str], build: BuildLog) -> Marke
                 resolution.resolution,
                 _dec(g.get("volumeNum"), 2),
                 _ts(parse_ts(mrec.fetched_at)),
+                deadline_type(g.get("question")),
+                None if g.get("negRiskOther") is None else bool(g.get("negRiskOther")),
             )
         )
         for i, (tok, name) in enumerate(zip(token_ids, names, strict=True)):
@@ -353,7 +337,8 @@ def bar_lines(
     by_token: dict[str, list[RawRecord]] = defaultdict(list)
     for rec in raw.records(pm.CLOB_PRICES_HISTORY):
         tok = str(rec.unit.get("token"))
-        if rec.status == 200 and tok in tokens:
+        # census fetches (v3 D1) share the endpoint at fidelity 60; bars are 1-minute only
+        if rec.status == 200 and tok in tokens and int(rec.unit.get("fidelity", 1)) == 1:
             by_token[tok].append(rec)
 
     for tok in sorted(by_token):
@@ -475,7 +460,7 @@ def rebuild(settings: IngestSettings) -> RebuildResult:
                 "condition_id, event_id, question_id, slug, question, category, neg_risk, "
                 "tick_size, min_order_size, fees_enabled, fee_type, fee_rate, fee_exponent, "
                 "created_at, open_ts, end_date, closed_time, resolved_at, resolution, "
-                "final_volume, ingested_at",
+                "final_volume, ingested_at, deadline_type, neg_risk_other",
                 mb.markets,
             )
             _copy_rows(

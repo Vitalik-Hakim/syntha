@@ -511,3 +511,34 @@ row and noting the date.
 - **Schema (migration 0010).** `trade_prints.proxy_wallet`, `bt_trades.basket_id` /
   `basket_role`, `orderbook_deltas.event_type` / `fee_rate_bps`, `recorder_watchlist`;
   `ENGINE_VERSION` 0.7.0. The reference re-run and its reading are in docs/DATA_NOTES.md ("M8").
+
+### M9 prep — probes, the three decisions and the census (engineering)
+
+- **Three product decisions applied** (2026-09-15; the facts are in docs/DATA_NOTES.md, "M9
+  prep"): capacity per month is measured over the collection's coverage window; basket
+  strategies are refused (not merely warned) on final-volume-filtered collections, at run
+  creation and in `prepare`; a market is a catch-all only after a person reviewed it
+  (`catch_all_reviews`, `tools/research/catch_all_review.py`). The M8 text rule and Gamma's
+  `negRiskOther` now only nominate candidates for review.
+- **Census as a separate ingest mode** (`syntha_ingestion.census`; `make census-sample /
+  census-fetch / census-build / census-verify`). Census manifests live in `raw/_census/`, apart
+  from collection manifests, so `make rebuild-normalized` never treats a 20,000-market census as a
+  collection. The sampler allocates within (category, duration class); category needs the event's
+  tags for 2025 markets (no `feeType`), so events are fetched before allocation — the one
+  place the census spends requests before the sample exists, and those requests reveal nothing
+  outcome-dependent. Observations are pure functions of raw records (tested by hand-derived
+  values), the build is deterministic and hashed (`census_runs`), and `payout` is engine-restricted.
+- **Depth and truncation.** The print walk stops at `end − 8 d` or 10 pages; `prints_truncated`
+  is set only when the cap hit before the depth. A liquidity window or a fill window that the walk
+  did not cover yields null, never a partial number. Verified against the busiest July-2025
+  market (16 days in 12 pages).
+- **CURRENT fees on fee-free months** are the category's latest schedule applied to the fill
+  price (fee-free categories, e.g. geopolitics, pay 0), computed with the engine's fee module so
+  the census and the backtester agree to the cent.
+- **Registrations** (`research/studies/<id>/registration.yaml`, PRD v3 §7.6) are registered by
+  `register.py add-registration`: one row for the study and one per primary cell (the BH count),
+  plus one per registered rule. S1 registers 660 cells (11 categories × 10 buckets × 6 offsets),
+  S2 60 contrast cells and one dynamic rule.
+- **Ingestion depends on the engine** (`syntha-engine` added to `syntha-ingestion`) for fee
+  arithmetic and `MarketTerms`; the engine still imports nothing from ingestion and performs no
+  I/O.

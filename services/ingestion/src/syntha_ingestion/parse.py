@@ -34,6 +34,77 @@ def fee_category(fee_type: str | None) -> str:
     return _FEE_CATEGORY.get(stem, stem)
 
 
+# Event tag slugs that name a category, in priority order (geopolitics is fee-free and would
+# otherwise fall into `no_fee`). Used when a market has no `feeType`: every 2025 market.
+TAG_CATEGORIES = (
+    "geopolitics",
+    "politics",
+    "sports",
+    "crypto",
+    "finance",
+    "economics",
+    "culture",
+    "weather",
+    "tech",
+    "mentions",
+)
+
+
+def market_category(fee_type: str | None, tags: list[str] | tuple[str, ...]) -> str | None:
+    """`feeType` first (fee eras from 2026), else the event's tag slugs, else None."""
+    if fee_type:
+        return fee_category(fee_type)
+    lowered = {t.lower() for t in tags}
+    for cat in TAG_CATEGORIES:
+        if cat in lowered:
+            return cat
+    return None
+
+
+# v3 §4.1 duration classes: scheduled end − open, known at listing.
+DURATION_CLASSES: tuple[tuple[str, int], ...] = (
+    ("ultra_short", 60 * 60),
+    ("intraday", 24 * 60 * 60),
+    ("multi_day", 30 * 24 * 60 * 60),
+)
+
+
+def duration_class(open_ts: datetime, end_ts: datetime) -> str:
+    seconds = (end_ts - open_ts).total_seconds()
+    for label, limit in DURATION_CLASSES:
+        if seconds <= limit:
+            return label
+    return "long"
+
+
+_MONTHS = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
+_DATEISH = (
+    rf"(?:{_MONTHS}\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,?\s+\d{{4}})?|\d{{1,2}}\s+{_MONTHS}"
+    rf"|\d{{4}}-\d{{2}}-\d{{2}}|\d{{1,2}}/\d{{1,2}}(?:/\d{{2,4}})?|(?:the\s+)?end\s+of\s+\w+"
+    rf"|{_MONTHS}\s+\d{{4}}|\d{{4}}|q[1-4](?:\s+\d{{4}})?|(?:this|next)\s+(?:week|month|year)"
+    r"|(?:mid|early|late)[- ]\w+|inauguration|election|halftime|kickoff)"
+)
+_BY = re.compile(rf"\b(?:by|before|prior to|no later than|until)\s+(?:the\s+)?{_DATEISH}", re.I)
+_ON = re.compile(rf"\b(?:on|at)\s+(?:the\s+)?{_DATEISH}", re.I)
+_FIXTURE = re.compile(
+    r"\b(?:vs\.?|v\.?|versus)\b|\s@\s|\bwin\b.*\b(?:game|match|race|round|set)\b", re.I
+)
+_BY_ANYWHERE = re.compile(r"\bby\s+(?:the\s+)?(?:end\s+of|" + _MONTHS + r"|\d{4}|q[1-4])", re.I)
+
+
+def deadline_type(question: str | None) -> str:
+    """v3 §4.4 (D4 subset): BY ("by/before/prior to" + a date phrase), ON ("on/at" + a date or a
+    fixture), else NONE. First pass: recall is traded for zero fuzzy matching."""
+    if not question:
+        return "NONE"
+    q = question.strip()
+    if _BY.search(q) or _BY_ANYWHERE.search(q):
+        return "BY"
+    if _ON.search(q) or _FIXTURE.search(q):
+        return "ON"
+    return "NONE"
+
+
 def parse_ts(value: Any) -> datetime | None:
     """Gamma/Data API timestamps: ISO-8601 with Z, Postgres-style `2026-04-09 00:28:21+00`,
     or epoch seconds (int or numeric string)."""

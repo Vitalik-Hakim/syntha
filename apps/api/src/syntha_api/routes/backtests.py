@@ -49,7 +49,13 @@ from syntha_contracts.backtest import PRESETS, BacktestRequest
 from syntha_contracts.enums import RunStatus
 from syntha_engine.strategy.features import FeatureError
 from syntha_worker import BACKTEST_QUEUE
-from syntha_worker.runs import NoDatasetVersion, create_run, execute_run, progress_key
+from syntha_worker.runs import (
+    NoDatasetVersion,
+    RefusedRequest,
+    create_run,
+    execute_run,
+    progress_key,
+)
 
 router = APIRouter(prefix="/backtests", tags=["backtests"])
 
@@ -179,7 +185,7 @@ def create_preset_backtests(
                     create_run(conn, request.with_preset(preset), group_id, parent_run_id=parent),
                 )
             )
-    except FeatureError as exc:
+    except (FeatureError, RefusedRequest) as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     except NoDatasetVersion as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
@@ -207,7 +213,7 @@ def create_backtest(
         _fetch_run(conn, parent)
     try:
         run_id = create_run(conn, request, parent_run_id=parent)
-    except FeatureError as exc:
+    except (FeatureError, RefusedRequest) as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     except NoDatasetVersion as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc

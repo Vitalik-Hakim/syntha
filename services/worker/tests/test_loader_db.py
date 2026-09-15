@@ -62,6 +62,18 @@ def test_restricted_fields_only_in_settlement_and_only_traded_side_loaded(db: st
     assert ds.wallets == ("0xwallet-a",)
     assert tok.print_wallet is not None and tok.print_wallet.tolist() == [0, 0]
     assert ds.markets["M1"].neg_risk is False and ds.markets["M1"].is_catch_all is None
+    # M9 decisions: a catch-all is only what a reviewer said it is; capacity months come from
+    # the collection's coverage window
+    assert ds.coverage == (1767225600, 1769904000)  # 2026-01-01 .. 2026-02-01 UTC
+
+
+def test_reviewed_catch_all_reaches_the_engine(db: str) -> None:
+    request = _request().model_copy(
+        update={"dataset": _request().dataset.model_copy(update={"collection": None})}
+    )
+    loaded = load_dataset(db, request)
+    assert loaded.dataset.markets["M2"].is_catch_all is True
+    assert loaded.dataset.coverage is None  # no collection, no window
 
 
 def test_either_side_loads_both_tokens(db: str) -> None:
