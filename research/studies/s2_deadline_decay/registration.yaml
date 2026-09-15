@@ -1,0 +1,72 @@
+# PRD v3 §7.6 registration — S2, deadline decay (§5.2): a stratification of S1 plus one
+# dynamic rule. Committed with S1, before any census observation exists.
+study: s2_deadline_decay
+title: Deadline decay
+registered_at: 2026-09-15T00:00:00Z
+registered_by: Claude Code (agent) on behalf of Vitalik Hakim
+data_seen_before_registration:
+  - "Everything listed in research/studies/s1_calibration/registration.yaml, and that registration itself."
+  - "No census month has been sampled, fetched, built or analysed."
+hypothesis: >
+  BY-type markets ("by <date>", "before <date>") that have not resolved are sticky: the YES price
+  fails to decay as the deadline approaches, so NO is underpriced in the last days.
+discovery_set:
+  D_2025: [2025-07, 2025-08, 2025-09, 2025-10, 2025-11, 2025-12]
+  D_2026: [2026-02, 2026-03, 2026-04, 2026-05]
+confirmation_sets:
+  C1: [2026-06, 2026-07, 2026-08]
+  C2: [2026-01, 2026-09, 2026-10]
+deadline_parser: >
+  syntha_ingestion.parse.deadline_type, a first pass (D4 subset): BY when the question has
+  "by / before / prior to / no later than / until" followed by a date phrase; ON when it has
+  "on / at" plus a date phrase or reads as a fixture ("A vs B"); else NONE. Stored on
+  census_markets.deadline_type. Precision is checked by hand on 100 census markets before the
+  discovery command runs; the check and its result go into the study report.
+test_1:
+  kind: observational, inside S1
+  estimand: >
+    For NO tokens (outcome_index 1): E[r | BY] − E[r | ON] per (price_bucket, offset), with r as
+    in S1 under CURRENT fees, cluster-bootstrapped by event_id and by UTC day (wider = headline).
+  primary_cells: price_bucket x offset   # count written by register.py
+  cell_dimensions:
+    price_bucket: ["[0.01,0.03)", "[0.03,0.10)", "[0.10,0.20)", "[0.20,0.35)", "[0.35,0.50)", "[0.50,0.65)", "[0.65,0.80)", "[0.80,0.90)", "[0.90,0.97)", "[0.97,0.99]"]
+    offset: ["-7d", "-3d", "-24h", "-6h", "-1h", "-15m"]
+primary_cells: price_bucket x offset
+cell_dimensions:
+  price_bucket: ["[0.01,0.03)", "[0.03,0.10)", "[0.10,0.20)", "[0.20,0.35)", "[0.35,0.50)", "[0.50,0.65)", "[0.65,0.80)", "[0.80,0.90)", "[0.90,0.97)", "[0.97,0.99]"]
+  offset: ["-7d", "-3d", "-24h", "-6h", "-1h", "-15m"]
+test_2:
+  kind: dynamic rule through the engine (one register row, below)
+  needs: a `universe.deadline_types` filter in the DSL, added with the discovery command; the rule is frozen here
+registered_rules:
+  - family: rule
+    name: deadline_decay_no_72h
+    definition:
+      universe: {side: BUY_NO, deadline_types: [BY]}
+      entry: NO price in [0.50, 0.90] at the −72h offset window, and YES price change over the prior 7 days >= −10% (it has not decayed)
+      exit: hold to settlement
+      order: {type: LIMIT, limit_offset_ticks: 1, ttl_bars: 5}
+      sizing: 2% of starting capital, max_positions_per_event 1
+      presets: [REALISTIC, CONSERVATIVE]
+selection_rule: |
+  Test 1: a contrast cell is a candidate if E[r | BY] − E[r | ON] > 0 with the wider cluster 90% CI
+  above zero, n >= 500 NO-token observations with fill_10m in each arm, fill rate >= 0.30 in the
+  BY arm, sign positive in >= 4/6 months of 2025 H2 and >= 3/4 of 2026 Feb–May, and it survives
+  Benjamini–Hochberg at 10% FDR across the 60 contrast cells (N from the register).
+  Test 2: the rule is a candidate if its engine result on D has E[r] under CURRENT fees > 0 with
+  the wider cluster 90% CI above zero, >= 500 trades pooled, and the same sign rule by month.
+confirmation_rule: PRD v3 §6.2, as for S1 (C1 then C2, Realistic and Conservative, permutation test)
+frozen_parameters:
+  offset_for_rule: -72h (the census −3d offset stands in for observational checks)
+  no_price_band: [0.50, 0.90]
+  decay_lookback_days: 7
+  decay_threshold: -0.10
+  limit_offset_ticks: 1
+  ttl_bars: 5
+what_would_kill_it: |
+  BY/ON contrast <= 0 or unstable between 2025 H2 and 2026; deadline parser precision < 90% on
+  the 100-market hand check; the dynamic rule losing under CURRENT fees on D or failing C1/C2.
+outputs:
+  - contrast table per (price_bucket, offset) with n, fill rate, E[r] per arm, difference and CI
+  - the rule's engine runs on D, C1, C2 with verdicts
+  - the parser precision check
