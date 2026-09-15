@@ -623,6 +623,64 @@ Raw numbers: `data/research/m8-rerun-00041.json`.
 - Census price records share the CLOB endpoint directory with 1-minute bar fetches; they carry
   `fidelity` in their unit and `bar_lines` ignores anything but fidelity 1.
 
+### Census 2025-07 — first month, acceptance passed (2026-09-15)
+
+`make census-sample MONTH=2025-07 SEED=20250701` then `make census-fetch`, both at 20 rps,
+concurrency 16. Manifest: `data/raw/_census/census-2025-07.json`.
+
+- **Frame:** 8,730 closed markets scheduled to end in July 2025 (88 keyset pages, about a
+  minute), 4,811 events fetched for tags and sibling counts (4 minutes). Nothing was
+  unobservable (every listed market had tokens and an open time).
+- **Allocation:** 6,147 markets over 25 (category × duration) strata. The 2,000 cap bound in
+  two strata only: `crypto/multi_day` (3,664 available) and `sports/multi_day` (2,919). July
+  2025 had almost no `ultra_short` markets (95: sports 88, politics 6, tech 1), so the 500 cap
+  never bound. Categories that month, from event tags (no market had a `feeType`): sports
+  2,621, crypto 2,039, weather 448, `other` (untagged) 456, politics 425, geopolitics 111, tech
+  43, finance 4; no `culture`, `economics` or `mentions` tags. 3,431 markets (56%) belong to an
+  event with ≥ 3 markets (`sibling`); 2,878 are neg-risk.
+- **Fetch:** 308 resolution batches (20 s), 6,147 trade walks = 6,813 pages (5.6 min; 197
+  walks stopped at the 8-day depth, 1 hit the 10-page cap → `prints_truncated`), 13,054 price
+  windows (12,294 hourly + 760 one-minute windows for intraday/ultra-short markets; 492,158
+  points on the resumed part alone). About 25,100 requests in total, ≈ 25 minutes of fetching
+  — a quarter of the PRD's 62,000-request estimate, because the July-2025 frame is 8,730
+  markets, not 20,000.
+- **Resumability, exercised for real:** the machine's DNS resolver failed for several minutes
+  mid-way through the price phase (`nodename nor servname provided`); 405 windows exhausted
+  their six retries and landed in `data/checkpoints/census-2025-07.failures.jsonl`. The fetch
+  was stopped, DNS came back, `census-fetch` was re-run: 6,455 units skipped as done, 4,585
+  fetched (the 405 failures among them), 0 failed, 1 retry.
+- **Build:** 39 s; `census_markets` 6,147 rows, `census_observations` 80,662 rows (57 MB).
+  Two consecutive builds and `census-verify` give the same hash,
+  `256249277051dbb79d38a4026b03006e6ea5031279e2c503ea0ef7dc6c1085d8`. All 6,147 markets
+  resolved (NO 3,043, YES 608, `OUTCOME_0` 1,301 and `OUTCOME_1` 1,191 for markets whose
+  outcomes are not Yes/No, INVALID 4); no Gamma/chain disagreements; no market dropped.
+- **Coverage (the numbers that decide S1's power):**
+
+| Offset | Observations | Has mid | `fill_10m` | `fill_30m` | Median staleness (min) |
+| --- | --- | --- | --- | --- | --- |
+| −7d (long markets only) | 3,282 | 88.7% | 13.3% | 18.8% | 271 |
+| −3d | 7,136 | 94.3% | 1.1% | 1.8% | 1,512 |
+| −24h | 11,266 | 95.7% | 1.5% | 2.9% | 740 |
+| −6h | 11,600 | 96.6% | 2.0% | 3.7% | 352 |
+| −1h | 12,104 | 96.9% | 22.8% | 27.0% | 94 |
+| −15m | 12,156 | 97.1% | 15.7% | 18.5% | 68 |
+| +1h | 12,104 | 71.7% | 0.5% | 1.3% | 12 |
+| +24h | 11,014 | 84.3% | 1.2% | 2.6% | 88 |
+
+  5,391 of 6,147 markets (87.7%) have a mid at −24h, above the 80% floor in the S1
+  registration. **Fill rates are the story:** outside the last hour, fewer than 3% of
+  token-observations saw a taker buy at ≤ mid + 1 tick within 10 minutes. July-2025 markets
+  were thin; the calibration surface will be measurable on mids almost everywhere but
+  executable only near the end (−1h: 22.8%, −15m: 15.7%) and, for long markets, a week out
+  (13.3%). The S1 selection rule's fill-rate floor (30%) will bind hard in this month. Liquidity
+  windows are covered for ≥ 96% of observations (null only where the walk stopped short).
+- **Sanity:** no observation has `fill_10m` above `mid + tick`; `fee_entry` is 0 everywhere
+  (fee-free era) and `fee_entry_current` is positive for 97% of fills (max 0.0175 = 7% × 0.25,
+  crypto at 0.50), zero for the fee-free categories.
+- **Deadline types (D4 first pass):** BY 111, ON 2,457 (mostly sports fixtures), NONE 3,579.
+  S2's BY arm will be small in 2025 months; the registration's n ≥ 500 per arm is a real bar.
+- **Raw layer:** ≈ 270 MB gzipped for the month (trades 188 MB, prices 59 MB, events 22 MB).
+
 ### The three M9 decisions (product owner, 2026-09-15)
 
 - **Capacity denominator = the collection's coverage window** (`Dataset.coverage`, from the

@@ -714,7 +714,8 @@ def market_inputs(
     tokens = tuple(member["tokens"])
     resolution = resolve_market(g, v2_row)
     tags = [str(t.get("slug") or t.get("label") or "") for t in ((event or {}).get("tags") or [])]
-    category = market_category(g.get("feeType"), tags)
+    # the same fallback the sampler used, so census_markets.category matches the stratum
+    category = market_category(g.get("feeType"), tags) or "other"
     schedule = g.get("feeSchedule") if g.get("feesEnabled") else None
     terms = MarketTerms(
         condition_id=member["condition_id"],
