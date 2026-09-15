@@ -25,7 +25,7 @@ from syntha_contracts.enums import RunStatus
 from syntha_contracts.strategy import StrategyDSL
 from syntha_engine import ENGINE_VERSION
 from syntha_engine.data import Dataset, SettlementTable
-from syntha_engine.honesty import compute_honesty
+from syntha_engine.honesty import compute_honesty, honesty_metrics
 from syntha_engine.runner import BacktestResult, prepare, simulate
 from syntha_engine.strategy.compiler import compile_strategy
 from syntha_worker.loader import LoadedDataset, load_dataset
@@ -168,7 +168,7 @@ def persist_result(conn: psycopg.Connection[Any], run_id: str, result: BacktestR
             "COPY bt_trades (run_id, seq, condition_id, clob_token_id, side, signal_ts, entry_ts, "
             "entry_price, entry_ref_price, shares, notional, entry_fee, exit_ts, exit_price, exit_fee, "
             "exit_reason, gross_pnl, fees_total, slippage_cost, net_pnl, return_pct, holding_seconds, "
-            "entry_rule_trace, exit_rule_trace, fill_status) FROM STDIN"
+            "entry_rule_trace, exit_rule_trace, fill_status, basket_id, basket_role) FROM STDIN"
         ) as cp:
             for t in result.trades:
                 cp.write_row(
@@ -198,6 +198,8 @@ def persist_result(conn: psycopg.Connection[Any], run_id: str, result: BacktestR
                         Jsonb(t["entry_rule_trace"]),
                         None if t["exit_rule_trace"] is None else Jsonb(t["exit_rule_trace"]),
                         t["fill_status"],
+                        t.get("basket_id"),
+                        t.get("basket_role"),
                     )
                 )
         with cur.copy(
@@ -310,13 +312,15 @@ def execute_run(
         )
         report("persist", 0.0)
         result.manifest["run_id"] = run_id
+        # v3 E5: MDE, cluster interval and the fee counterfactual travel with the metrics
+        metrics = {**result.metrics, **honesty_metrics(honesty)}
         with psycopg.connect(url) as conn, conn.transaction():
             persist_result(conn, run_id, result)
             conn.execute(
                 "UPDATE backtest_runs SET status = 'DONE', finished_at = now(), metrics = %s, "
                 "data_quality = %s, manifest = %s, honesty = %s WHERE id = %s",
                 (
-                    Jsonb(json.loads(json.dumps(result.metrics, default=str))),
+                    Jsonb(json.loads(json.dumps(metrics, default=str))),
                     Jsonb(json.loads(json.dumps(result.data_quality, default=str))),
                     Jsonb(result.manifest),
                     Jsonb(json.loads(json.dumps(honesty, default=str))),

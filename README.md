@@ -58,7 +58,8 @@ make rebuild-normalized   # rebuild Postgres tables from data/raw and record a d
 make data-report          # coverage, gaps, staleness, bar-vs-print distance, fee consistency
 make verify-normalized    # do the tables still match the latest dataset version's hash?
 make m1-acceptance        # rebuild twice (hashes must match) + 500 markets with full history
-make recorder             # record the live order book (top 10 markets) — leave it running
+make recorder             # record the live order book for the designed watchlist (PRD v3 E7) — leave it running
+make recorder-coverage    # token-days recorded, gaps > 5 min, bytes/day, active strata
 ```
 
 Other collections: `make ingest-sample COLLECTION=name SAMPLE_START=… SAMPLE_END=… SAMPLE_N=…
@@ -66,7 +67,7 @@ SAMPLE_SEED=…`, then `make ingest-fetch COLLECTION=name`. Read
 [docs/DATA_NOTES.md](docs/DATA_NOTES.md) before trusting any number: the "price history" is
 a sampled mid-like price, not trades, and fees have history the API only partly exposes.
 
-The recorder produces roughly 5–6M order-book delta rows per day for 10 markets. Compression
+The recorder watches a stratified list of ~48 markets (4 categories × binary/multi × thin/liquid, refilled hourly; `recorder_watchlist`) and stores `last_trade_price` prints with their `fee_rate_bps`. It produced roughly 5–6M order-book delta rows per day for 10 markets in M1. Compression
 starts after two days.
 
 ## Backtests
@@ -120,6 +121,14 @@ the side (a "price ≥ 0.9" entry buys the favourite, whichever outcome it is).
 uv run python tools/research/sweep.py --sweep discovery --collections march-2026-liquid-400 april-2026-liquid-400 may-2026-liquid-400 --extra examples/research/*.json
 uv run python tools/research/pooled.py --sweep discovery --select      # pooled table + finalists
 ```
+
+PRD v3 (`docs/PRD_v3.md`, M8 done): strategies place marketable-limit orders by default
+(`order` block), liquidity is same-side, neg-risk sets can be bought as all-or-nothing baskets,
+wallet prints can trigger entries and exits, and every run reports cluster intervals, MDE and
+capacity next to a HISTORICAL/CURRENT fee counterfactual. Nothing runs from
+`tools/research/` without a row in `docs/research/REGISTER.md`
+(`uv run python tools/research/register.py add|add-grid …`). Re-running the M7 survivor under
+the new engine cut its June result from +41.8% to +23.6% (docs/DATA_NOTES.md, "M8").
 
 Outcome (docs/DATA_NOTES.md, "M7 strategy search"): over seven months and 2,800 liquid markets,
 none of 44 configurations in seven families shows an edge that survives pre-registration,

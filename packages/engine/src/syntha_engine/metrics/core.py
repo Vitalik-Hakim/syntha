@@ -35,7 +35,31 @@ DEFINITIONS = {
     "gross_pnl": "shares × (exit reference price − entry reference price)",
     "slippage_cost": "shares × |fill price − reference price|, entry and exit",
     "exit_reason_breakdown": "executed trades grouped by exit reason; win rate, P&L and costs within each group",
+    "return_per_dollar": "net return per dollar risked (v3 E5): pooled = Σ net P&L / Σ notional over executed trades; mean = average of each trade's net P&L / notional. Path-independent, unlike ROI",
+    "capacity": "capturable notional per month at $1,000 and $10,000 starting capital: Σ over signals of min(requested notional, participation × same-side print notional in the fill bar); with the share of signals that would be size-constrained (v3 E5)",
+    "mde_80": "minimum detectable effect at 80% power, one-sided 5%: 2.48 × the cluster-bootstrap SE of return per dollar. A negative result rules out edges larger than this, not smaller (v3 E5)",
 }
+
+EXECUTED = frozenset({"FILLED", "PARTIAL"})
+
+
+def executed_trades(trades: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The statistical unit: executed ordinary trades plus basket SUMMARY rows. A basket's legs
+    are one bet (all-or-nothing, settled together) and are excluded so it is counted once."""
+    return [t for t in trades if t["fill_status"] in EXECUTED and t.get("basket_role") != "LEG"]
+
+
+def return_per_dollar(executed: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    nets = [Decimal(t["net_pnl"]) for t in executed]
+    notionals = [Decimal(t["notional"]) for t in executed]
+    total = sum(notionals, Decimal(0))
+    per_trade = [float(n / d) for n, d in zip(nets, notionals, strict=True) if d > 0]
+    return {
+        "pooled": float(sum(nets, Decimal(0)) / total) if total > 0 else None,
+        "mean": statistics.fmean(per_trade) if per_trade else None,
+        "n_trades": len(per_trade),
+        "notional": float(total),
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +162,7 @@ def compute_metrics(
     execution_model: str,
     fee_mode: str,
     extra_warnings: Sequence[str] = (),
+    capacity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ending = equity_points[-1].equity if equity_points else starting_capital
     net_profit = ending - starting_capital
@@ -157,10 +182,8 @@ def compute_metrics(
         downside = math.sqrt(statistics.fmean([min(r, 0.0) ** 2 for r in rets]))
         sortino = mean / downside * math.sqrt(252) if downside > 0 else None
 
-    executed = [t for t in trades if t["fill_status"] in ("FILLED", "PARTIAL")]
-    excluded = Counter(
-        t["fill_status"] for t in trades if t["fill_status"] not in ("FILLED", "PARTIAL")
-    )
+    executed = executed_trades(trades)
+    excluded = Counter(t["fill_status"] for t in trades if t["fill_status"] not in EXECUTED)
     nets = [Decimal(t["net_pnl"]) for t in executed]
     wins = [n for n in nets if n > 0]
     losses = [n for n in nets if n < 0]
@@ -229,6 +252,8 @@ def compute_metrics(
             "net_pnl": float(gross - fees - slippage),
         },
         "cost_ratio": cost_ratio,
+        "return_per_dollar": return_per_dollar(executed),
+        "capacity": capacity,
         "low_sample": n_trades < LOW_SAMPLE_TRADES,
         "warnings": warnings,
         "definitions": DEFINITIONS,

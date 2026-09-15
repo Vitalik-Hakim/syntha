@@ -207,3 +207,14 @@ liquid markets, none of 44 rule-based configurations in seven families shows an 
 survives pre-registration, multiple-comparison accounting and untouched months. The built-in
 example stays in the app with this record, labelled as a failed test, because a documented
 negative is the most useful thing this search produced.
+
+### Register (M8, PRD v3 §3.6)
+
+From M8 every configuration must have a row in `docs/research/REGISTER.md` before it runs
+(`tools/research/register.py`; the sweep and run tools refuse anything else). The 44
+configurations above were registered retroactively on 2026-09-14 with the note that all seven
+months had already been seen, so their rows document what was tried, not a pre-registration.
+Engine 0.7.0 (limit orders, same-side liquidity) also revises every number in this file
+downward: the survivor's June run falls from +41.8% to +23.6% with the same document
+(docs/DATA_NOTES.md, "M8"). Stage 4 (v3 §6) starts from a clean register and a fresh
+discovery set.

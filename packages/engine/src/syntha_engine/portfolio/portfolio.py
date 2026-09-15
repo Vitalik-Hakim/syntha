@@ -60,6 +60,8 @@ class Position:
     exit_fills: list[dict[str, Any]] = field(default_factory=list)
     exit_trace: dict[str, Any] | None = None
     flags: dict[str, Any] = field(default_factory=dict)
+    signal_wallet: int | None = None  # v3 E4
+    basket_id: str | None = None  # v3 E3: legs of one all-or-nothing order share it
 
     @property
     def entry_cost(self) -> Decimal:
@@ -211,6 +213,20 @@ class Portfolio:
         self.cash += amount
         self.ledger.append(LedgerEntry(ts, kind, amount, self.cash, ref))
 
+    def open_count(self, event_id: str | None = None) -> int:
+        """Open positions, a basket counting once, optionally within one event."""
+        seen: set[str] = set()
+        n = 0
+        for p in self.open.values():
+            if event_id is not None and p.event_id != event_id:
+                continue
+            if p.basket_id is None:
+                n += 1
+            elif p.basket_id not in seen:
+                seen.add(p.basket_id)
+                n += 1
+        return n
+
     def positions_value(self, marks: dict[str, Decimal]) -> Decimal:
         return sum((p.shares * marks[t] for t, p in self.open.items()), ZERO)
 
@@ -229,13 +245,14 @@ class Portfolio:
         pending_tokens: set[str],
         pending_events: list[str | None],
     ) -> str | None:
-        """None if a new position may be signalled, else the blocking constraint."""
+        """None if a new position may be signalled, else the blocking constraint. A basket's legs
+        count as one position (v3 E3)."""
         if token_id in self.open or token_id in pending_tokens:
             return "already_holding"
-        if len(self.open) + len(pending_tokens) >= constraints.max_open_positions:
+        if self.open_count() + len(pending_tokens) >= constraints.max_open_positions:
             return "max_open_positions"
         if event_id is not None:
-            in_event = sum(1 for p in self.open.values() if p.event_id == event_id)
+            in_event = self.open_count(event_id)
             in_event += sum(1 for e in pending_events if e == event_id)
             if in_event >= constraints.max_positions_per_event:
                 return "max_positions_per_event"
@@ -319,8 +336,8 @@ class Portfolio:
             raise InvariantViolation(f"cash {self.cash} != closed-form {expected}")
         if self.ledger[-1].running_cash != self.cash:
             raise InvariantViolation("ledger running cash does not match cash")
-        if len(self.open) > max_open:
-            raise InvariantViolation(f"{len(self.open)} open positions exceeds {max_open}")
+        if self.open_count() > max_open:  # a basket's legs count once (v3 E3)
+            raise InvariantViolation(f"{self.open_count()} open positions exceeds {max_open}")
         for t, p in self.open.items():
             if t not in marks:
                 raise InvariantViolation(f"open position {t} has no mark")

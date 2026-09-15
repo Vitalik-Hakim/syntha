@@ -1,0 +1,358 @@
+{
+  "name": "basket_all_or_nothing",
+  "asserts": "v3 E3: a neg-risk YES set is bought as one all-or-nothing basket (one position for the constraints); a leg without liquidity refuses the whole basket; the summary row sums the legs and settles with them",
+  "derivation": [
+    "Two neg-risk events, three YES tokens each (c1 and f2 are the catch-alls), every YES priced 0.30 at m0-m12; a1 and e2 resolve YES at m10 (closed m9), the rest NO. No fees, MARKET orders, TRADE_PRINT with unlimited participation and zero slippage.",
+    "Basket rule NEGRISK_YES_SET, min_edge 0.02: margin = 1 - 0.90 - 0 fees - 0.03 ticks - 0.02 = 0.05 >= 0 -> both events signal at m0 (max_open_positions 2 counts a basket as one).",
+    "m1: ev1 legs each print BUY 100 @ 0.30 -> fill 0.30, cost per unit 0.90; FIXED_CASH 30 -> floor(30 / 0.90, 2dp) = 33.33 units; three legs of 33.33 x 0.30 = 9.999 -> cash 100 - 29.997 = 70.003 (basket B1, seq 1-3).",
+    "m1: ev2's f2y has no print -> NO_PRINTS on one leg -> the whole basket is UNEXECUTABLE_BASKET_LEG (BASKET_LEG_NO_PRINTS), seq 4, nothing bought.",
+    "m2: ev1 is blocked by max_positions_per_event (its basket is one position); ev2 signals again and fills at m3 (f2y prints from m2): basket B3, seq 5-7, cash 40.006.",
+    "m10 settlement: a1y and e2y pay 33.33 each, the other legs 0 -> cash 40.006 + 66.66 = 106.666. Each basket nets 33.33 - 29.997 = 3.333; summary rows (seq 8, 9) carry entry_price = sum of leg fills 0.90, shares = units, notional 29.997, exit_reason MARKET_RESOLVED once every leg settled."
+  ],
+  "start": "2026-01-01T00:00:00Z",
+  "end_minute": null,
+  "markets": [
+    {
+      "condition_id": "a1",
+      "event_id": "ev1",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "YES",
+      "resolved_minute": 10,
+      "closed_minute": 9,
+      "tokens": [
+        {
+          "clob_token_id": "a1y",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "a1n",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ],
+      "neg_risk": true,
+      "is_catch_all": false
+    },
+    {
+      "condition_id": "b1",
+      "event_id": "ev1",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "NO",
+      "resolved_minute": 10,
+      "closed_minute": 9,
+      "tokens": [
+        {
+          "clob_token_id": "b1y",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "b1n",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ],
+      "neg_risk": true,
+      "is_catch_all": false
+    },
+    {
+      "condition_id": "c1",
+      "event_id": "ev1",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "NO",
+      "resolved_minute": 10,
+      "closed_minute": 9,
+      "tokens": [
+        {
+          "clob_token_id": "c1y",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "c1n",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ],
+      "neg_risk": true,
+      "is_catch_all": true
+    },
+    {
+      "condition_id": "d2",
+      "event_id": "ev2",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "NO",
+      "resolved_minute": 10,
+      "closed_minute": 9,
+      "tokens": [
+        {
+          "clob_token_id": "d2y",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "d2n",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ],
+      "neg_risk": true,
+      "is_catch_all": false
+    },
+    {
+      "condition_id": "e2",
+      "event_id": "ev2",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "YES",
+      "resolved_minute": 10,
+      "closed_minute": 9,
+      "tokens": [
+        {
+          "clob_token_id": "e2y",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "e2n",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ],
+      "neg_risk": true,
+      "is_catch_all": false
+    },
+    {
+      "condition_id": "f2",
+      "event_id": "ev2",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "NO",
+      "resolved_minute": 10,
+      "closed_minute": 9,
+      "tokens": [
+        {
+          "clob_token_id": "f2y",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "f2n",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ],
+      "neg_risk": true,
+      "is_catch_all": true
+    }
+  ],
+  "fee_schedules": [],
+  "request": {
+    "strategy": {
+      "name": "golden",
+      "universe": {
+        "side": "BUY_YES"
+      },
+      "entry": {
+        "basket": {
+          "kind": "NEGRISK_YES_SET",
+          "min_edge": 0.02,
+          "require_catch_all": true,
+          "min_markets": 3
+        }
+      },
+      "sizing": {
+        "mode": "FIXED_CASH",
+        "value": 30
+      },
+      "exit": {
+        "any": []
+      },
+      "constraints": {
+        "max_open_positions": 2,
+        "max_total_exposure_pct": 0.9,
+        "max_positions_per_event": 1,
+        "cooldown_minutes_per_market": 0,
+        "allow_reentry_same_market": false
+      },
+      "order": {
+        "type": "MARKET"
+      }
+    },
+    "starting_capital": "100",
+    "seed": 7,
+    "bar_interval_minutes": 1,
+    "decision_lag_bars": 1,
+    "execution": {
+      "model": "TRADE_PRINT",
+      "slippage_ticks": 0,
+      "liquidity_participation": null,
+      "partial_fill_policy": "ALLOW"
+    },
+    "fees": {
+      "mode": "FIXED",
+      "fixed_rate": "0"
+    },
+    "max_stale_minutes": 60
+  },
+  "expected": {
+    "cash_end": "106.666",
+    "equity_end": "106.666",
+    "trades": [
+      {
+        "seq": 1,
+        "clob_token_id": "a1y",
+        "fill_status": "FILLED",
+        "basket_id": "B1",
+        "basket_role": "LEG",
+        "entry_minute": 1,
+        "entry_price": "0.30",
+        "shares": "33.33",
+        "notional": "9.999",
+        "exit_reason": "MARKET_RESOLVED",
+        "net_pnl": "23.331"
+      },
+      {
+        "seq": 2,
+        "clob_token_id": "b1y",
+        "fill_status": "FILLED",
+        "basket_id": "B1",
+        "basket_role": "LEG",
+        "net_pnl": "-9.999"
+      },
+      {
+        "seq": 3,
+        "clob_token_id": "c1y",
+        "fill_status": "FILLED",
+        "basket_id": "B1",
+        "basket_role": "LEG",
+        "net_pnl": "-9.999"
+      },
+      {
+        "seq": 4,
+        "side": "BASKET",
+        "fill_status": "UNEXECUTABLE_BASKET_LEG",
+        "reason": "BASKET_LEG_NO_PRINTS",
+        "basket_id": "B2",
+        "basket_role": "SUMMARY",
+        "entry_minute": 1,
+        "condition_id": "event:ev2",
+        "net_pnl": "0"
+      },
+      {
+        "seq": 5,
+        "clob_token_id": "d2y",
+        "fill_status": "FILLED",
+        "basket_id": "B3",
+        "basket_role": "LEG",
+        "entry_minute": 3,
+        "net_pnl": "-9.999"
+      },
+      {
+        "seq": 6,
+        "clob_token_id": "e2y",
+        "fill_status": "FILLED",
+        "basket_id": "B3",
+        "basket_role": "LEG",
+        "net_pnl": "23.331"
+      },
+      {
+        "seq": 7,
+        "clob_token_id": "f2y",
+        "fill_status": "FILLED",
+        "basket_id": "B3",
+        "basket_role": "LEG",
+        "net_pnl": "-9.999"
+      },
+      {
+        "seq": 8,
+        "side": "BASKET",
+        "fill_status": "FILLED",
+        "basket_id": "B1",
+        "basket_role": "SUMMARY",
+        "condition_id": "event:ev1",
+        "entry_minute": 1,
+        "entry_price": "0.90",
+        "shares": "33.33",
+        "notional": "29.997",
+        "exit_reason": "MARKET_RESOLVED",
+        "exit_minute": 10,
+        "net_pnl": "3.333"
+      },
+      {
+        "seq": 9,
+        "side": "BASKET",
+        "fill_status": "FILLED",
+        "basket_id": "B3",
+        "basket_role": "SUMMARY",
+        "condition_id": "event:ev2",
+        "entry_minute": 3,
+        "entry_price": "0.90",
+        "notional": "29.997",
+        "exit_reason": "MARKET_RESOLVED",
+        "net_pnl": "3.333"
+      }
+    ],
+    "data_quality": {
+      "signals_generated": 3,
+      "signals_filled": 2,
+      "signals_unexecutable": 1,
+      "baskets_signalled": 3,
+      "baskets_filled": 2,
+      "baskets_unexecutable": 1
+    }
+  }
+}

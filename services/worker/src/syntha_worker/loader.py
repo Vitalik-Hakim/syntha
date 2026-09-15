@@ -14,6 +14,7 @@ from __future__ import annotations
 import io
 import itertools
 import logging
+import re
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -34,6 +35,23 @@ from syntha_engine.data import (
 )
 
 log = logging.getLogger(__name__)
+
+# v3 §4.2 catch-all detection, M8 text rule (D2 in M11 replaces it with event-level parsing):
+# a neg-risk market whose question is the residual outcome. Conservative on purpose: a false
+# "catch-all present" would let a basket treat a non-exhaustive set as exhaustive.
+CATCH_ALL = re.compile(
+    r"^\s*(other|another|someone else|anyone else|none of the above|no one|nobody)\b"
+    r"|\bwill (another|any other|some other|someone else|anyone else|no one|nobody)\b"
+    r"|\b(none of the above|any other (candidate|team|player|person|country|outcome))\b",
+    re.IGNORECASE,
+)
+
+
+def is_catch_all_question(question: str | None, neg_risk: bool | None) -> bool | None:
+    """None when it cannot be known (no question, or not a neg-risk market)."""
+    if question is None or not neg_risk:
+        return None
+    return bool(CATCH_ALL.search(question))
 
 
 @dataclass(frozen=True)
@@ -115,7 +133,7 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
         rows = conn.execute(
             "SELECT m.condition_id, m.event_id, m.category, m.tick_size, m.min_order_size, m.created_at, "
             "m.open_ts, m.end_date, m.fees_enabled, m.fee_type, m.fee_rate, m.fee_exponent, "
-            "m.resolution, m.resolved_at, m.closed_time "
+            "m.resolution, m.resolved_at, m.closed_time, m.neg_risk, m.question "
             + market_filter
             + " ORDER BY m.condition_id",
             params,
@@ -136,6 +154,8 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
                 fee_type=r[9],
                 fee_rate=None if r[10] is None else Decimal(r[10]),
                 fee_exponent=r[11],
+                neg_risk=r[15],
+                is_catch_all=is_catch_all_question(r[16], r[15]),
             )
             # ENGINE-RESTRICTED columns go only to settlement.
             settlements[r[0]] = Settlement(r[12] or "UNRESOLVED", _epoch(r[13]), _epoch(r[14]))
@@ -166,7 +186,7 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
             conn,
             """
             SELECT t.idx, extract(epoch FROM p.ts)::bigint, p.price, p.size,
-                   CASE p.side WHEN 'BUY' THEN 1 ELSE -1 END
+                   CASE p.side WHEN 'BUY' THEN 1 ELSE -1 END, p.proxy_wallet
             FROM trade_prints p
             JOIN unnest(%(tokens)s::text[]) WITH ORDINALITY AS t(token, idx) ON p.clob_token_id = t.token
             WHERE TRUE
@@ -180,6 +200,7 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
                 "price": pl.Float64,
                 "size": pl.Float64,
                 "side": pl.Int8,
+                "wallet": pl.Utf8,
             },
         )
         prior: dict[str, float] = dict(
@@ -210,7 +231,11 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
 
     bar_arrays = _split(bars, ["ts", "price"], token_ids)
     del bars
-    print_arrays = _split(prints, ["ts", "price", "size", "side"], token_ids)
+    # v3 E4: wallets become small integer ids in order of first appearance; -1 = unknown
+    cat = prints["wallet"].cast(pl.Categorical)
+    wallet_names = tuple(str(w) for w in cat.cat.get_categories().to_list())
+    prints = prints.with_columns(cat.to_physical().cast(pl.Int32).fill_null(-1).alias("wallet_id"))
+    print_arrays = _split(prints, ["ts", "price", "size", "side", "wallet_id"], token_ids)
     del prints
     empty_i, empty_f = np.empty(0, np.int64), np.empty(0, np.float64)
     tokens: dict[str, TokenData] = {}
@@ -229,6 +254,9 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
             print_size=p.get("size", empty_f).astype(np.float64),
             print_side=p.get("side", np.empty(0, np.int8)).astype(np.int8),
             prior_notional=float(prior.get(tok) or 0.0),
+            print_wallet=p.get("wallet_id", np.empty(0, np.int32)).astype(np.int32)
+            if wallet_names
+            else None,
         )
     dataset = Dataset(
         markets=markets,
@@ -236,6 +264,7 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
         fee_schedules=schedules,
         dataset_version_id=None if version is None else str(version[0]),
         selection=selection,
+        wallets=wallet_names,
     )
     return LoadedDataset(
         dataset, SettlementTable(settlements), None if version is None else version[1]

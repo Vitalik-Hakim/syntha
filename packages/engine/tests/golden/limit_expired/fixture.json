@@ -1,0 +1,116 @@
+{
+  "name": "limit_expired",
+  "asserts": "v3 E1: a LIMIT order that never sees an eligible print within its TTL is UNEXECUTABLE_LIMIT_EXPIRED with the best price seen; nothing is bought",
+  "derivation": [
+    "LIMIT order, offset 1 tick, TTL 5 bars. YES bar price 0.40 at m0-m5; signal at m0, limit 0.41, live m1..m5.",
+    "Every bar m1..m5 prints only BUY 100 @ 0.45 (above the limit): NO_PRINTS_AT_LIMIT at m1..m4 (the order rests), and at m5 the TTL lapses.",
+    "The trade row is UNEXECUTABLE_LIMIT_EXPIRED / LIMIT_EXPIRED dated m5 with best_price_seen 0.45 and bars_waited 5. No price is invented: entry_price is null. Cash stays 100."
+  ],
+  "start": "2026-01-01T00:00:00Z",
+  "end_minute": null,
+  "markets": [
+    {
+      "condition_id": "m1",
+      "event_id": "ev-m1",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "UNRESOLVED",
+      "resolved_minute": null,
+      "closed_minute": null,
+      "tokens": [
+        {
+          "clob_token_id": "yes1",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "no1",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ]
+    }
+  ],
+  "fee_schedules": [],
+  "request": {
+    "strategy": {
+      "name": "golden",
+      "universe": {
+        "side": "BUY_YES"
+      },
+      "entry": {
+        "all": [
+          {
+            "feature": "price",
+            "op": "lte",
+            "value": 0.45
+          }
+        ]
+      },
+      "sizing": {
+        "mode": "FIXED_CASH",
+        "value": 20
+      },
+      "exit": {
+        "any": []
+      },
+      "constraints": {
+        "max_open_positions": 5,
+        "max_total_exposure_pct": 0.25,
+        "max_positions_per_event": 1,
+        "cooldown_minutes_per_market": 0,
+        "allow_reentry_same_market": false
+      },
+      "order": {
+        "type": "LIMIT",
+        "limit_offset_ticks": 1,
+        "ttl_bars": 5
+      }
+    },
+    "starting_capital": "100",
+    "seed": 7,
+    "bar_interval_minutes": 1,
+    "decision_lag_bars": 1,
+    "execution": {
+      "model": "TRADE_PRINT",
+      "slippage_ticks": 1,
+      "liquidity_participation": 0.1,
+      "partial_fill_policy": "ALLOW"
+    },
+    "fees": {
+      "mode": "FIXED",
+      "fixed_rate": "0"
+    },
+    "max_stale_minutes": 60
+  },
+  "expected": {
+    "cash_end": "100",
+    "equity_end": "100",
+    "trades": [
+      {
+        "seq": 1,
+        "fill_status": "UNEXECUTABLE_LIMIT_EXPIRED",
+        "reason": "LIMIT_EXPIRED",
+        "entry_minute": 5,
+        "entry_price": null,
+        "entry_ref_price": null,
+        "shares": "0",
+        "net_pnl": "0"
+      }
+    ],
+    "data_quality": {
+      "signals_generated": 1,
+      "signals_filled": 0,
+      "signals_unexecutable": 1,
+      "signals_limit_expired": 1
+    }
+  }
+}

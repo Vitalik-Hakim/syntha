@@ -5,6 +5,6 @@ in-memory Dataset and returns a BacktestResult. tools/check_engine_io.py fails C
 network, database, filesystem or subprocess import in this tree.
 """
 
-ENGINE_VERSION = "0.6.0"  # M6: min-order policy, capacity blocks (see DECISIONS)
+ENGINE_VERSION = "0.7.0"  # M8 (PRD v3): limit orders, same-side liquidity, baskets, wallet exits
 
 __all__ = ["ENGINE_VERSION"]

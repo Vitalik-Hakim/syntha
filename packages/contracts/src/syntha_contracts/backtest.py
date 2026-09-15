@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from syntha_contracts.enums import ExecutionModel, FeeMode, PartialFillPolicy
+from syntha_contracts.enums import ExecutionModel, FeeMode, LiquiditySide, PartialFillPolicy
 from syntha_contracts.strategy import StrategyDSL
 
 BarInterval = Literal[1, 5, 15, 60]
@@ -39,6 +39,12 @@ class ExecutionConfig(_Strict):
     adverse_selection: bool = Field(
         default=False,
         description="TRADE_PRINT fills at the worst print in the bar instead of VWAP.",
+    )
+    liquidity_side: LiquiditySide = Field(
+        default=LiquiditySide.SAME_SIDE,
+        description="v3 E2: which taker prints are liquidity. SAME_SIDE: a buy fills against "
+        "prints other takers bought (ask liquidity), a sell against prints they sold. BOTH: every "
+        "print in the bar (v2 behaviour, optimistic).",
     )
 
     @model_validator(mode="after")

@@ -9,7 +9,14 @@ import { Badge, Disclaimer, EmptyState, ErrorState, Loading, Signed } from "@/co
 import { apiGet, type TradePage, type TradeRow } from "@/lib/api/client";
 import { duration, price, shares, ts, usd } from "@/lib/format";
 
-const STATUSES = ["FILLED", "PARTIAL", "UNEXECUTABLE", "REJECTED_MIN_SIZE"] as const;
+const STATUSES = [
+  "FILLED",
+  "PARTIAL",
+  "UNEXECUTABLE",
+  "UNEXECUTABLE_LIMIT_EXPIRED",
+  "UNEXECUTABLE_BASKET_LEG",
+  "REJECTED_MIN_SIZE",
+] as const;
 const col = createColumnHelper<TradeRow>();
 
 export function Blotter({ id, initialStatus = null, initialExitReason = null }: {

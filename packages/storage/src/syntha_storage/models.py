@@ -144,6 +144,9 @@ class TradePrint(Base):
     price: Mapped[Decimal] = mapped_column(PRICE)
     size: Mapped[Decimal] = mapped_column(MONEY)
     side: Mapped[str] = mapped_column(Text)
+    # v3 E4: the taker's proxy wallet (pseudonymous public address). NULL before migration 0010's
+    # rebuild. Stays inside the app and research artefacts; never published.
+    proxy_wallet: Mapped[str | None] = mapped_column(Text)
 
 
 class OrderbookSnapshot(Base):
@@ -183,6 +186,28 @@ class OrderbookDelta(Base):
     best_bid: Mapped[Decimal | None] = mapped_column(PRICE)
     best_ask: Mapped[Decimal | None] = mapped_column(PRICE)
     received_at: Mapped[datetime | None] = mapped_column(TSTZ)
+    # v3 E7: 'price_change' (a level delta) or 'trade' (a `last_trade_price` event, where `size`
+    # is the fill size and `price` its price). NULL = price_change, recorded before 0010.
+    event_type: Mapped[str | None] = mapped_column(Text)
+    # Only on trade rows: the fee rate Polymarket reported for that fill (basis points).
+    fee_rate_bps: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+
+
+class RecorderWatchlist(Base):
+    """v3 E7: the designed recorder watchlist, point-in-time. A token is watched from `added_at`
+    until `removed_at`; re-adding a token is a new row. `stratum` is
+    `<category>/<binary|multi>/<thin|liquid>`; `reason` is `stratum_fill`, `structural_candidate`
+    or `manual`."""
+
+    __tablename__ = "recorder_watchlist"
+
+    clob_token_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    condition_id: Mapped[str] = mapped_column(Text)
+    event_id: Mapped[str | None] = mapped_column(Text)
+    stratum: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text)
+    added_at: Mapped[datetime] = mapped_column(TSTZ, primary_key=True)
+    removed_at: Mapped[datetime | None] = mapped_column(TSTZ)
 
 
 class FeeSchedule(Base):
@@ -333,6 +358,9 @@ class BtTrade(Base):
     entry_rule_trace: Mapped[dict[str, Any]] = mapped_column(JSONB)
     exit_rule_trace: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     fill_status: Mapped[str] = mapped_column(Text)
+    # v3 E3: legs of one all-or-nothing basket share basket_id; the SUMMARY row is their sum
+    basket_id: Mapped[str | None] = mapped_column(Text)
+    basket_role: Mapped[str | None] = mapped_column(Text)  # LEG | SUMMARY
 
 
 class BtEquity(Base):

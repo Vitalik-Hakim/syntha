@@ -12,15 +12,18 @@ def test_exit_reasons_match_prd_12_4() -> None:
         "END_OF_BACKTEST",
         "FORCED_EXPOSURE_LIMIT",
         "DATA_GAP",
+        "WALLET_SELL",  # PRD v3 §3.4
     }
 
 
-def test_fill_statuses_match_prd_7() -> None:
+def test_fill_statuses_match_prd_7_and_v3_3() -> None:
     assert {s.value for s in FillStatus} == {
         "FILLED",
         "PARTIAL",
         "UNEXECUTABLE",
         "REJECTED_MIN_SIZE",
+        "UNEXECUTABLE_LIMIT_EXPIRED",  # v3 E1
+        "UNEXECUTABLE_BASKET_LEG",  # v3 E3
     }
 
 

@@ -470,6 +470,91 @@ BT-20260914-00041 (Realistic), -00042 (Optimistic), -00043 (Conservative); July 
 
 ---
 
+## M8 — engine 0.7.0 reference re-run and PRD v3 probes — 2026-09-14
+
+### E1/E2 re-run of BT-20260914-00041 (the reference for how much the two fixes change a known result)
+
+BT-20260914-00041 is the M7 survivor (*Longshot to Resolution 0.1–0.2 within 24h*) on
+`june-2026-liquid-400`, Realistic preset, $1,000, seed 1, engine 0.6.0: +41.8%, 21 trades. The
+same request was re-run under engine 0.7.0 in four execution variants (parent run 00041; all
+browsable). `order` and `liquidity_side` are the only differences between the four.
+
+| Variant | Run | ROI | Trades | Win rate | Signals → filled / refused | Traded notional | Perm. pct | ROI 90% CI (trade) | Cluster 90% CI (key) | Return/$ (CI) | MDE@80% |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| v2 semantics: MARKET, BOTH | BT-20260914-00060 | **+41.8%** | 21 | 38% | 54 → 21 / 32 NO_PRINTS | $221 | 98 | +5.8% to +83.8% | +5.2% to +84.1% (event) | 1.89 (+0.26 to +3.53) | 2.45 |
+| E2 only: MARKET, SAME_SIDE | BT-20260914-00058 | +22.7% | 20 | 40% | 54 → 20 / 33 NO_PRINTS | $187 | 86 | −0.7% to +49.0% | −1.2% to +49.8% (day) | 1.22 (−0.08 to +2.41) | 1.85 |
+| E1 only: LIMIT, BOTH | BT-20260914-00059 | +27.8% | 21 | 19% | 47 → 21 / 22 LIMIT_EXPIRED | $132 | 88 | −5.4% to +71.0% | −5.7% to +71.7% (event) | 2.11 (−0.52 to +4.82) | 4.03 |
+| **E1+E2: LIMIT, SAME_SIDE (v3 default)** | **BT-20260914-00057** | **+23.6%** | 19 | 21% | 65 → 19 / 43 LIMIT_EXPIRED | $125 | 79 | −8.8% to +66.4% | −8.7% to +66.6% (day) | 1.90 (−0.90 to +4.77) | 4.28 |
+
+Reading:
+- The v2-semantics variant reproduces 00041 exactly (ROI, trades, signals, refusals): the E1/E2
+  code paths are opt-in and the old path is intact.
+- **The two fixes take the known result from "consistent with an edge on this slice" to "not
+  distinguishable from luck" without touching the strategy**: +41.8% (CI +5.8% to +83.8%,
+  permutation 98) becomes +23.6% (CI −8.8% to +66.4%, permutation 79). This is the correction
+  to expect on every v2-era hold-to-resolution number, and it is why v3 studies run under E1/E2
+  only.
+- E1 (limit orders) is the larger change in *kind*: the win rate falls from 38% to 19–21%. A
+  limit at the signal price + 1 tick fills when other takers are buying at or below it, which
+  is disproportionately in markets drifting down; the chased fills that filled 0.3–0.5 above
+  the signal in v2 (16 of the survivor's 146 fills in M7's anatomy) are now
+  `UNEXECUTABLE_LIMIT_EXPIRED` (43 of 65 signals under SAME_SIDE). Expired orders end the
+  attempt and the episode re-signals at later candidate bars, which is why the signal count
+  rises from 54 to 65.
+- E2 (same-side liquidity) mostly changes *size*: traded notional falls from $221 to $187 with
+  the same signals; with 20 trades the ROI difference (+41.8% → +22.7%) is a couple of fills.
+- Cluster intervals are barely wider than trade-level ones here because the 19–21 trades are
+  already one per event and mostly one per day. Return per dollar risked is 1.2–2.1 with
+  intervals spanning zero; the MDE@80% of 1.9–4.3 per dollar says this sample could not have
+  detected anything smaller than "the position roughly triples" — longshot P&L is that lumpy.
+- Fees: HISTORICAL and CURRENT coincide for these markets (no schedule change applies), so the
+  fee counterfactual is a no-op on this run; it is not on category fee changes elsewhere.
+- Capacity (E5): under the v3 default, $45 per month capturable at $1,000 starting capital and
+  $56 at $10,000, with 94% / 98% of signals size-constrained by the 10% participation cap on
+  same-side prints in the fill bar. The "month" is the signal span (85 days for this collection,
+  because the June markets' scheduled ends spread over three months), not the equity-curve span.
+  Cross-check: the 19 filled trades traded $124.58; Σ min(requested, available) over all 65
+  signals is $125.13.
+
+Raw numbers: `data/research/m8-rerun-00041.json`.
+
+### Gamma and websocket probes for PRD v3 (Appendix B, partial: what M8 uses)
+
+- `GET /markets` rows carry `negRisk`, `feeType`, `volume24hr`, `acceptingOrders`, `closed`,
+  `enableOrderBook`, `clobTokenIds` (JSON string) and `events[0].{id, negRisk, ticker}`.
+  `?condition_ids=A&condition_ids=B` (repeated parameter) returns exactly those markets (2 rows
+  for 2 ids); `offset` pages the `order=volume24hr` listing (offset 900 → 100 rows at
+  $4.1k–4.8k of 24h volume). Fee-type stems seen at ranks 900–1,000: sports 35, weather 22,
+  crypto 15, none 7, culture 6, politics 5, finance_prices 5, tech 3, economics 2.
+- Websocket `last_trade_price` (live capture): `{asset_id, event_type, fee_rate_bps, market,
+  price, side, size, timestamp (ms), transaction_hash}`; the captured print was a BUY of 5 at
+  0.002 with `fee_rate_bps: "0"`. A `best_bid_ask` event (`best_bid`, `best_ask`, `spread`)
+  also arrives; it is not stored. The recorder now writes `last_trade_price` as
+  `orderbook_deltas` rows with `event_type = 'trade'` and `fee_rate_bps`.
+- Not yet probed (needed from M9): `prices-history` at `fidelity=60` for 2025 markets, Data API
+  `/v2/trades` paging depth and a `user` filter, `/activity` and `/positions`, `/v2/resolutions`
+  row shapes.
+
+### Wallets, catch-alls and neg-risk in the normalized layer (migration 0010)
+
+- `trade_prints.proxy_wallet` is new and **NULL for every existing row**; the raw `/v2/trades`
+  records carry `proxy_wallet` (M1 finding), so the next `make rebuild-normalized` (≈ 41 min for
+  the seven months) fills it. Until then wallet-triggered strategies (E4) see no wallets on real
+  data; the golden fixture is the E4 acceptance. Wallet addresses are pseudonymous public keys;
+  they stay inside the app and research artefacts and are never published.
+- The dataset content hash covers `SELECT *`, so `make verify-normalized` reports a mismatch
+  against the pre-0010 dataset version until that rebuild. Expected, not corruption.
+- `markets.neg_risk` now reaches the engine (`MarketTerms.neg_risk`). Baskets (E3) only ever
+  form on events whose listed markets are all neg-risk; anything else is not a mutually
+  exclusive set and the pre-screen skips it.
+- Catch-all detection (v3 §4.2) is an M8 text rule on the question of a neg-risk market:
+  a leading `other | another | someone else | anyone else | none of the above | no one | nobody`,
+  or `will (another | any other | some other | someone else | anyone else | no one | nobody)`,
+  or `none of the above` / `any other (candidate | team | player | person | country | outcome)`
+  anywhere; case-insensitive (`syntha_worker.loader.CATCH_ALL`). Conservative on purpose: a
+  false "catch-all present" would let a basket treat a non-exhaustive set as exhaustive. D2
+  (M11) replaces it with event-level parsing; `EventView.catch_all_present` is the only consumer.
+
 ## Schema
 
 ### trade_prints primary key is `(id, ts)`, not `(id)` — resolved (M0)

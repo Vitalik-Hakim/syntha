@@ -22,13 +22,13 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from typing import Any
 
 import numpy as np
 
 from syntha_contracts.backtest import BacktestRequest
-from syntha_contracts.enums import ExitReason, FillStatus, PartialFillPolicy, Side
+from syntha_contracts.enums import ExitReason, FillStatus, PartialFillPolicy, Side, SizingMode
 from syntha_engine import ENGINE_VERSION
 from syntha_engine import nearmiss as NM
 from syntha_engine.data import Dataset, FeeScheduleEntry, SettlementTable
@@ -38,14 +38,23 @@ from syntha_engine.grid import Grid, TokenFrame, build_frame
 from syntha_engine.metrics.core import EquityPoint, compute_metrics
 from syntha_engine.portfolio.portfolio import ZERO, Portfolio, Position, size_entry
 from syntha_engine.strategy import features as F
-from syntha_engine.strategy.compiler import RANDOM_DRAW, DSLStrategy, Strategy, compile_strategy
+from syntha_engine.strategy.compiler import (
+    PRINT_TRIGGER,
+    RANDOM_DRAW,
+    BasketDecision,
+    DSLStrategy,
+    Strategy,
+    compile_strategy,
+)
 from syntha_engine.strategy.view import (
     Bar,
     BarWindow,
+    EventView,
     FeatureView,
     MarketStatic,
     MarketView,
     PositionView,
+    SiblingView,
 )
 
 
@@ -61,6 +70,10 @@ def _iso(ts: int | None) -> str | None:
     return None if ts is None else _dt(ts).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _from_iso(text: str) -> int:
+    return int(datetime.fromisoformat(text).timestamp())
+
+
 def _q6(x: Decimal) -> str:
     return str(x.quantize(Decimal("0.000001")))
 
@@ -73,9 +86,13 @@ def _with_windows(clauses: list[dict[str, Any]], close_ts: int) -> list[dict[str
     """Attach the time window each lookback feature read: it ends at the signal bar's close."""
     out = []
     for c in clauses:
-        minutes = max((c.get("params") or {}).values(), default=0)
-        if minutes:
-            c = {**c, "window": {"from": _iso(close_ts - minutes * 60), "to": _iso(close_ts)}}
+        params = c.get("params") or {}
+        minutes = max(
+            (v for v in params.values() if isinstance(v, int | float) and not isinstance(v, bool)),
+            default=0,
+        )
+        if minutes and c.get("feature") != PRINT_TRIGGER:
+            c = {**c, "window": {"from": _iso(close_ts - int(minutes * 60)), "to": _iso(close_ts)}}
         out.append(c)
     return out
 
@@ -91,12 +108,42 @@ class EquityRow:
 
 @dataclass
 class Signal:
-    kind: str  # ENTRY | EXIT
+    kind: str  # ENTRY | EXIT | BASKET
     token_id: str
     signal_k: int
     due_k: int
     trace: dict[str, Any] | None  # entry traces of DSL strategies are built when recorded
     reason: ExitReason | None = None
+    # v3 E1: a resting order. `limit` None means a MARKET order; the order is live through
+    # `expires_k` and records the best same-side price it saw while waiting.
+    limit: Decimal | None = None
+    expires_k: int | None = None
+    best_seen: float | None = None
+    wallet: int | None = None  # v3 E4: the wallet whose print triggered the entry
+    basket: Any = None  # v3 E3: BasketDecision for kind BASKET
+
+
+# Refusals an order can wait out within its TTL (v3 E1); everything else fails at once.
+WAITABLE_REFUSALS = frozenset(
+    {fills.NO_PRINTS, fills.NO_PRINTS_AT_LIMIT, fills.NO_PRICE, fills.STALE_PRICE}
+)
+RESTING = "RESTING"
+LIMIT_EXPIRED = "LIMIT_EXPIRED"
+
+
+def _limit_for(frame: TokenFrame, k: int, direction: str, order: Any) -> Decimal | None:
+    """The limit price an order created at bar k carries (v3 E1): the bar's price plus (buys) or
+    minus (sells) `limit_offset_ticks`, clamped to the price range. None for MARKET orders or
+    when the bar has no price."""
+    if order.type != "LIMIT":
+        return None
+    price = frame.price_at(k)
+    if math.isnan(price):
+        return None
+    tick = frame.terms.tick_size
+    sign = 1 if direction == "BUY" else -1
+    limit = fills.to_decimal(price) + sign * order.limit_offset_ticks * tick
+    return Decimal(min(max(limit, tick), 1 - tick))
 
 
 # A run whose signals were this often unexecutable or rejected is PARTIAL: not an error, not a
@@ -168,6 +215,7 @@ class _Prepared:
         default_factory=list
     )  # (kind, local i, score)
     gate: np.ndarray | None = None  # eligible bars (universe filters passed), local
+    trigger_wallet: np.ndarray | None = None  # v3 E4: wallet id of the qualifying print per bar
 
 
 @dataclass
@@ -199,6 +247,25 @@ def _side_of(outcome_index: int) -> str:
     return Side.BUY_YES.value if outcome_index == 0 else Side.BUY_NO.value
 
 
+def _print_trigger(
+    frame: TokenFrame, side: str, min_notional: float, allowed: set[int] | None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per bar: the largest qualifying print's notional (NaN when none) and its wallet id (v3 E4).
+    Prints are known at the bar's close, like every other bar feature."""
+    notional = np.full(frame.n, np.nan)
+    wallet = np.full(frame.n, -1, dtype=np.int32)
+    value = frame.raw_price * frame.raw_size
+    mask = (frame.raw_side == (1 if side == "BUY" else -1)) & (value >= min_notional)
+    if allowed is not None:
+        mask &= np.isin(frame.raw_wallet, np.fromiter(allowed, dtype=np.int32, count=len(allowed)))
+    for j in np.flatnonzero(mask):
+        i = int(frame.raw_local[j])
+        if np.isnan(notional[i]) or value[j] > notional[i]:
+            notional[i] = value[j]
+            wallet[i] = frame.raw_wallet[j]
+    return notional, wallet
+
+
 @dataclass
 class Preparation:
     """Everything computed once per (request, dataset): frames, features, eligibility gates and the
@@ -219,6 +286,10 @@ class Preparation:
     n_wanted: int
     near_misses_enabled: bool
     near_miss_separation: int
+    # v3 E3: sibling tokens per event, and the bars at which a set identity could be violated
+    event_tokens: dict[str, list[str]] = field(default_factory=dict)
+    basket_events: dict[str, np.ndarray] = field(default_factory=dict)
+    basket_k: np.ndarray = field(default_factory=lambda: np.empty(0, np.int64))
 
 
 def run(
@@ -299,7 +370,17 @@ def prepare(
 
     # ------------------------------------------------------------ precompute (vectorized)
     prepared: dict[str, _Prepared] = {}
-    near_misses_enabled = isinstance(strat, DSLStrategy) and strat.dsl.entry.random is None
+    near_misses_enabled = (
+        isinstance(strat, DSLStrategy)
+        and strat.dsl.entry.random is None
+        and not strat.uses_print_trigger
+        and not strat.uses_basket
+    )
+    trigger_allowed: set[int] | None = None
+    trigger = strat.dsl.entry.print_trigger if isinstance(strat, DSLStrategy) else None
+    if trigger is not None and trigger.wallets is not None:
+        wanted_wallets = set(trigger.wallets)
+        trigger_allowed = {i for i, w in enumerate(dataset.wallets) if w in wanted_wallets}
     near_miss_separation = max(strat.lookback_bars, 60 // step_min, 1)
     funnel: Counter[str] = Counter()
     ev_k_parts: list[np.ndarray] = []
@@ -320,6 +401,11 @@ def prepare(
         feats = {
             ref.key: F.compute(frame, ref.name, dict(ref.params)) for ref in strat.feature_refs
         }
+        trigger_wallet = None
+        if trigger is not None:
+            feats[PRINT_TRIGGER], trigger_wallet = _print_trigger(
+                frame, trigger.side, trigger.min_notional, trigger_allowed
+            )
         draws = None
         if strat.uses_random:
             rng = np.random.default_rng([request.seed & 0xFFFFFFFF, zlib.crc32(tok.encode())])
@@ -366,7 +452,7 @@ def prepare(
 
         near: list[tuple[str, int, float | None]] = []
         if isinstance(strat, DSLStrategy):
-            mask, nulls = strat.entry_mask(feats, draws)
+            mask, nulls = strat.entry_mask(feats, draws, frame.n)
             q.counters["bars_skipped_null_feature"] += int(np.sum(gate & nulls))
             funnel["entry_rules_true_ignoring_universe"] += int(mask.sum())
             candidates = np.flatnonzero(gate & mask)
@@ -385,11 +471,25 @@ def prepare(
                     near.append((NM.BLOCKED_BY_UNIVERSE, i, None))
         else:
             candidates = np.flatnonzero(gate)
-        prepared[tok] = _Prepared(frame, feats, draws, block_local, candidates, near, gate)
+        prepared[tok] = _Prepared(
+            frame, feats, draws, block_local, candidates, near, gate, trigger_wallet
+        )
         if candidates.size:
             ev_k_parts.append(frame.k0 + candidates)
             ev_tok_parts.append(np.full(candidates.size, len(token_names), dtype=np.int32))
         token_names.append(tok)
+
+    event_tokens: dict[str, list[str]] = {}
+    basket_events: dict[str, np.ndarray] = {}
+    basket_k = np.empty(0, np.int64)
+    if isinstance(strat, DSLStrategy) and strat.uses_basket:
+        for tok in token_names:
+            ev_id = dataset.markets[dataset.tokens[tok].condition_id].event_id
+            if ev_id is not None:
+                event_tokens.setdefault(ev_id, []).append(tok)
+        basket_events = _basket_candidates(prepared, event_tokens, strat.dsl.entry.basket)
+        if basket_events:
+            basket_k = np.unique(np.concatenate(list(basket_events.values())))
 
     # Candidate (bar, token) pairs sorted by bar, ties in token order (tokens are sorted).
     ev_k = np.concatenate(ev_k_parts) if ev_k_parts else np.empty(0, np.int64)
@@ -412,7 +512,49 @@ def prepare(
         n_wanted=len(wanted),
         near_misses_enabled=near_misses_enabled,
         near_miss_separation=near_miss_separation,
+        event_tokens=event_tokens,
+        basket_events=basket_events,
+        basket_k=basket_k,
     )
+
+
+def _basket_candidates(
+    prepared: dict[str, _Prepared],
+    event_tokens: dict[str, list[str]],
+    basket: Any,
+) -> dict[str, np.ndarray]:
+    """Bars at which an event's open siblings *could* satisfy the basket rule, screened without
+    fees or ticks (a superset of the exact check `evaluate_event` makes at those bars)."""
+    out: dict[str, np.ndarray] = {}
+    yes_set = basket.kind == "NEGRISK_YES_SET"
+    for ev, toks in event_tokens.items():
+        if len(toks) < basket.min_markets:
+            continue
+        if not all(prepared[t].frame.terms.neg_risk for t in toks):
+            continue  # not a mutually exclusive set: no identity to violate
+        frames = [prepared[t].frame for t in toks]
+        k_lo = min(f.k0 for f in frames)
+        k_hi = max(f.k0 + f.n for f in frames)
+        width = k_hi - k_lo
+        price_sum = np.zeros(width)
+        n_open = np.zeros(width, dtype=np.int64)
+        catch = np.zeros(width, dtype=bool)
+        for t in toks:
+            p = prepared[t]
+            f = p.frame
+            o = f.k0 - k_lo
+            is_open = ~np.isnan(f.price) & (np.arange(f.n) < p.block_local)
+            price_sum[o : o + f.n] += np.where(is_open, f.price, 0.0)
+            n_open[o : o + f.n] += is_open
+            if f.terms.is_catch_all:
+                catch[o : o + f.n] |= is_open
+        payoff = np.ones(width) if yes_set else (n_open - 1).astype(np.float64)
+        cand = (n_open >= basket.min_markets) & (price_sum <= payoff - basket.min_edge + 1e-9)
+        if basket.require_catch_all:
+            cand &= catch
+        if cand.any():
+            out[ev] = k_lo + np.flatnonzero(cand)
+    return out
 
 
 def simulate(
@@ -442,11 +584,59 @@ def simulate(
         prep.funnel,
     )
     q = copy.deepcopy(prep.quality)
+    order = request.strategy.order
+    watches_wallets = isinstance(strat, DSLStrategy) and any(
+        r.type == "WALLET_SELL" for r in strat.dsl.exit.any
+    )
     lean = forced is not None
     ev_k, ev_tok = (forced.ev_k, forced.ev_tok) if forced is not None else (prep.ev_k, prep.ev_tok)
     near_misses_enabled = prep.near_misses_enabled and near_misses and not lean
     near_miss_separation = prep.near_miss_separation
     dsl_only = isinstance(strat, DSLStrategy)
+    uses_basket = isinstance(strat, DSLStrategy) and strat.uses_basket and not lean
+    basket_k = prep.basket_k if uses_basket else np.empty(0, np.int64)
+    n_baskets = 0
+    basket_k_set = set(basket_k.tolist())
+
+    def baskets_at(k: int) -> list[str]:
+        return sorted(ev for ev, ks in prep.basket_events.items() if k in set(ks.tolist()))
+
+    def event_view(ev: str, k: int) -> EventView:
+        """The event's siblings open at bar k, point-in-time (v3 E3): listed by the bar's close,
+        priced, not halted; catch-all status only from listed siblings."""
+        sibs: list[SiblingView] = []
+        catch = False
+        close = grid.close(k)
+        for tok in prep.event_tokens[ev]:
+            p = prepared[tok]
+            f = p.frame
+            i = k - f.k0
+            if not (0 <= i < p.block_local) or math.isnan(f.price[i]):
+                continue
+            if f.terms.open_ts is not None and f.terms.open_ts > close:
+                continue
+            vol, notional, _, _ = f.prints_at(k, 1)
+            sibs.append(
+                SiblingView(
+                    f.terms.condition_id,
+                    tok,
+                    f.token.outcome_index,
+                    float(f.price[i]),
+                    float(f.terms.tick_size),
+                    None if f.terms.min_order_size is None else float(f.terms.min_order_size),
+                    bool(f.terms.is_catch_all),
+                    vol,
+                    (notional / vol) if vol > 0 else None,
+                )
+            )
+            catch = catch or bool(f.terms.is_catch_all)
+        return EventView(
+            _dt(grid.ts(k)),
+            ev,
+            tuple(sibs),
+            catch,
+            bool(sibs) and all(bool(prepared[s.clob_token_id].frame.terms.neg_risk) for s in sibs),
+        )
 
     def candidates_at(k: int) -> list[str]:
         lo, hi = np.searchsorted(ev_k, k, "left"), np.searchsorted(ev_k, k, "right")
@@ -460,7 +650,7 @@ def simulate(
     pending: list[Signal] = []
     equity_rows: list[EquityRow] = []
 
-    def view_for(tok: str, k: int, pos: Position | None) -> MarketView:
+    def view_for(tok: str, k: int, pos: Position | None, wallet_sold: bool = False) -> MarketView:
         p = prepared[tok]
         frame = p.frame
         i = k - frame.k0
@@ -504,6 +694,7 @@ def simulate(
                 float(pos.entry_price),
                 float(pos.shares),
                 (grid.ts(k) - pos.entry_ts) / 60,
+                pos.signal_wallet,
             )
         return MarketView(
             _dt(grid.ts(k)),
@@ -512,6 +703,7 @@ def simulate(
             FeatureView(values),
             static,
             pv,
+            wallet_sold,
         )
 
     def marks() -> dict[str, Decimal]:
@@ -676,9 +868,11 @@ def simulate(
         row["entry_rule_trace"]["attempts"] = ep.attempts
         row["entry_rule_trace"]["attempt_refusals"] = dict(sorted(ep.reasons.items()))
         portfolio.rejected_rows.append(row)
-        if row["fill_status"] == FillStatus.UNEXECUTABLE.value:
+        if row["fill_status"].startswith("UNEXECUTABLE"):
             q.counters["signals_unexecutable"] += 1
             q.unexecutable[row["entry_rule_trace"]["execution"].get("reason") or "UNKNOWN"] += 1
+            if row["fill_status"] == FillStatus.UNEXECUTABLE_LIMIT_EXPIRED.value:
+                q.counters["signals_limit_expired"] += 1
         else:
             q.counters["signals_rejected_min_size"] += 1
             sizing = row["entry_rule_trace"].get("sizing") or {}
@@ -701,6 +895,10 @@ def simulate(
         if not pending and (not portfolio.open or (lean and not evaluate_exits)):
             j = int(np.searchsorted(ev_k, k, "left"))
             nxt = int(ev_k[j]) if j < ev_k.size else grid.n
+            if basket_k.size:
+                jb = int(np.searchsorted(basket_k, k, "left"))
+                if jb < basket_k.size:
+                    nxt = min(nxt, int(basket_k[jb]))
             if portfolio.open:
                 js = int(np.searchsorted(settle_keys, k, "left"))
                 if js < settle_keys.size:
@@ -745,7 +943,11 @@ def simulate(
                     fee = fee_amount(pos.shares, payout, pos.fee_terms)
                 portfolio.settle(pos, ts, payout, fee, trace)
             before = len(pending)
-            pending = [sig for sig in pending if dataset.tokens[sig.token_id].condition_id != cid]
+            pending = [
+                sig
+                for sig in pending
+                if sig.kind == "BASKET" or dataset.tokens[sig.token_id].condition_id != cid
+            ]
             q.counters["signals_cancelled_by_settlement"] += before - len(pending)
             for tok in [t for t in episodes if dataset.tokens[t].condition_id == cid]:
                 finish_episode(tok)
@@ -754,9 +956,14 @@ def simulate(
         # 3. exits
         pending_exit = {sig.token_id for sig in pending if sig.kind == "EXIT"}
         for pos in sorted(portfolio.open.values(), key=lambda p: p.seq) if evaluate_exits else ():
-            if pos.token_id in pending_exit:
-                continue
-            view = view_for(pos.token_id, k, pos)
+            if pos.token_id in pending_exit or pos.basket_id is not None:
+                continue  # basket legs hold to settlement (v3 E3)
+            wallet_sold = bool(
+                watches_wallets
+                and pos.signal_wallet is not None
+                and prepared[pos.token_id].frame.wallet_printed(k, pos.signal_wallet, -1)
+            )
+            view = view_for(pos.token_id, k, pos, wallet_sold)
             assert view.position is not None
             decision = strat.evaluate_exit(view, view.position)
             if decision is not None:
@@ -773,7 +980,19 @@ def simulate(
                         for c in decision.checks
                     ],
                 }
-                pending.append(Signal("EXIT", pos.token_id, k, k + lag, trace, decision.reason))
+                limit = _limit_for(prepared[pos.token_id].frame, k, "SELL", order)
+                pending.append(
+                    Signal(
+                        "EXIT",
+                        pos.token_id,
+                        k,
+                        k + lag,
+                        trace,
+                        decision.reason,
+                        limit=limit,
+                        expires_k=k + lag + (order.ttl_bars - 1 if limit is not None else 0),
+                    )
+                )
 
         # 4. entries
         pend_entries = [sig for sig in pending if sig.kind == "ENTRY"]
@@ -837,21 +1056,115 @@ def simulate(
             ep.last_candidate_k = k
             ep.attempts += 1
             ep.attempt_pending = True
-            pending.append(Signal("ENTRY", tok, k, k + lag, trace_now))
+            frame_k = prepared[tok].frame
+            limit = _limit_for(frame_k, k, "BUY", order)
+            wallet_arr = prepared[tok].trigger_wallet
+            wallet_id = None
+            if wallet_arr is not None and wallet_arr[k - frame_k.k0] >= 0:
+                wallet_id = int(wallet_arr[k - frame_k.k0])
+            pending.append(
+                Signal(
+                    "ENTRY",
+                    tok,
+                    k,
+                    k + lag,
+                    trace_now,
+                    limit=limit,
+                    expires_k=k + lag + (order.ttl_bars - 1 if limit is not None else 0),
+                    wallet=wallet_id,
+                )
+            )
             pend_tokens.add(tok)
             pend_events.append(terms.event_id)
+
+        # 4b. baskets (v3 E3): one all-or-nothing order per event whose set identity is violated
+        if uses_basket and basket_k.size and k in basket_k_set:
+            pending_baskets = {sig.token_id for sig in pending if sig.kind == "BASKET"}
+            for ev in baskets_at(k):
+                if ev in pending_baskets:
+                    continue
+                if portfolio.open_count(ev) >= constraints.max_positions_per_event:
+                    q.blocked_by_constraint["max_positions_per_event"] += 1
+                    continue
+                if portfolio.open_count() + len(pend_tokens) + len(pending_baskets) >= (
+                    constraints.max_open_positions
+                ):
+                    q.blocked_by_constraint["max_open_positions"] += 1
+                    continue
+                assert isinstance(strat, DSLStrategy)
+                ev_view = event_view(ev, k)
+                fee_per_unit = 0.0
+                for s_ in ev_view.siblings:
+                    terms_s = dataset.markets[s_.condition_id]
+                    ft = resolve_fee_terms(terms_s, ts, request.fees, dataset.fee_schedules)
+                    fee_per_unit += float(
+                        fee_amount(Decimal(1), fills.to_decimal(s_.price or 0.0), ft)
+                    )
+                basket_decision = strat.evaluate_event(ev_view, fee_per_unit)
+                if basket_decision is None:
+                    continue
+                q.counters["baskets_signalled"] += 1
+                q.counters["signals_generated"] += 1
+                pending.append(
+                    Signal(
+                        "BASKET",
+                        ev,
+                        k,
+                        k + lag,
+                        {"ts": _iso(ts), "decision": "ENTER_BASKET", **basket_decision.trace},
+                        basket=basket_decision,
+                        expires_k=k + lag + (order.ttl_bars - 1 if order.type == "LIMIT" else 0),
+                    )
+                )
+                pending_baskets.add(ev)
 
         # 5. execute due signals: exits first, then entries, each in signal order
         bar_marks = marks()
         due = [sig for sig in pending if sig.due_k == k]
         pending = [sig for sig in pending if sig.due_k != k]
-        for sig in [s_ for s_ in due if s_.kind == "EXIT"] + [
-            s_ for s_ in due if s_.kind == "ENTRY"
-        ]:
-            if sig.kind == "EXIT":
-                _execute_exit(
-                    sig, k, request, prepared, portfolio, halted, grid, q, dataset.fee_schedules
+        for sig in (
+            [s_ for s_ in due if s_.kind == "EXIT"]
+            + [s_ for s_ in due if s_.kind == "ENTRY"]
+            + [s_ for s_ in due if s_.kind == "BASKET"]
+        ):
+            can_rest = sig.expires_k is not None and k < sig.expires_k
+            if sig.kind == "BASKET":
+                n_baskets += 1
+                result_b = _execute_basket(
+                    sig,
+                    k,
+                    request,
+                    dataset,
+                    prepared,
+                    portfolio,
+                    halted,
+                    grid,
+                    q,
+                    bar_marks,
+                    order,
+                    can_rest,
+                    f"B{n_baskets}",
                 )
+                if result_b == RESTING:
+                    n_baskets -= 1
+                    sig.due_k = k + 1
+                    pending.append(sig)
+            elif sig.kind == "EXIT":
+                outcome = _execute_exit(
+                    sig,
+                    k,
+                    request,
+                    prepared,
+                    portfolio,
+                    halted,
+                    grid,
+                    q,
+                    dataset.fee_schedules,
+                    can_rest,
+                )
+                if outcome == RESTING:
+                    sig.due_k = k + 1
+                    pending.append(sig)
             else:
                 ep = episodes[sig.token_id]
                 ep.attempt_pending = False
@@ -869,8 +1182,13 @@ def simulate(
                     ep,
                     entry_trace,
                     strat.exit_plan if isinstance(strat, DSLStrategy) else None,
+                    can_rest,
                 )
-                if failure is None:
+                if failure == RESTING:
+                    ep.attempt_pending = True
+                    sig.due_k = k + 1
+                    pending.append(sig)
+                elif failure is None:
                     done = episodes.pop(sig.token_id)
                     q.episodes.append((done.start_k, done.last_candidate_k, sig.token_id))
                 else:
@@ -1005,9 +1323,11 @@ def _execute_entry(
     episode: _Episode,
     entry_trace: Any,
     exit_plan: Callable[[float], list[dict[str, Any]]] | None,
+    can_rest: bool = False,
 ) -> str | None:
-    """Attempt an entry. Returns None when a position opened, else the refusal reason (the
-    would-be trade row is kept on the episode)."""
+    """Attempt an entry. Returns None when a position opened, RESTING when the order waits for a
+    later bar within its TTL (v3 E1), else the refusal reason (the would-be trade row is kept on
+    the episode)."""
     tok = sig.token_id
     frame = prepared[tok].frame
     terms = frame.terms
@@ -1057,8 +1377,33 @@ def _execute_entry(
         cfg,
         max_stale_minutes=request.max_stale_minutes,
         trading_closed=halted(tok, k),
+        limit=sig.limit,
     )
     if quote.status == FillStatus.UNEXECUTABLE:
+        best = quote.detail.get("best_price")
+        if (
+            best is not None
+            and not math.isnan(best)
+            and (sig.best_seen is None or best < sig.best_seen)
+        ):
+            sig.best_seen = float(best)
+        if quote.reason in WAITABLE_REFUSALS and can_rest:
+            return RESTING
+        if quote.reason in WAITABLE_REFUSALS and sig.limit is not None:
+            return reject(
+                FillStatus.UNEXECUTABLE_LIMIT_EXPIRED,
+                LIMIT_EXPIRED,
+                {
+                    **quote.detail,
+                    "last_refusal": quote.reason,
+                    "limit_price": float(sig.limit),
+                    "best_price_seen": sig.best_seen,
+                    "bars_waited": (k - sig.due_k) + 1,
+                },
+                None,
+                quote.ref_price,
+                None,
+            )
         return reject(
             FillStatus.UNEXECUTABLE, quote.reason, quote.detail, None, quote.ref_price, None
         )
@@ -1164,6 +1509,7 @@ def _execute_entry(
                 ],
             },
             fill_status=status,
+            signal_wallet=sig.wallet,
         )
     )
     marks[tok] = fills.to_decimal(frame.price_at(k))
@@ -1180,10 +1526,12 @@ def _execute_exit(
     grid: Grid,
     q: _Quality,
     fee_schedules: tuple[FeeScheduleEntry, ...],
-) -> None:
+    can_rest: bool = False,
+) -> str | None:
+    """Returns RESTING when the sell order waits within its TTL, else None."""
     pos = portfolio.open.get(sig.token_id)
     if pos is None:
-        return
+        return None
     frame = prepared[sig.token_id].frame
     ts = grid.ts(k)
     quote = fills.quote(
@@ -1193,10 +1541,14 @@ def _execute_exit(
         request.execution,
         max_stale_minutes=request.max_stale_minutes,
         trading_closed=halted(sig.token_id, k),
+        limit=sig.limit,
     )
     if quote.status == FillStatus.UNEXECUTABLE:
-        q.exit_unexecutable[quote.reason or "UNKNOWN"] += 1
-        return  # position stays open; the exit rule is re-evaluated next bar
+        if quote.reason in WAITABLE_REFUSALS and can_rest:
+            return RESTING
+        reason = LIMIT_EXPIRED if quote.reason in WAITABLE_REFUSALS and sig.limit else quote.reason
+        q.exit_unexecutable[reason or "UNKNOWN"] += 1
+        return None  # position stays open; the exit rule is re-evaluated next bar
     assert quote.fill_price is not None and quote.ref_price is not None
     shares = pos.shares
     step = Decimal(1).scaleb(-request.share_precision)
@@ -1205,11 +1557,11 @@ def _execute_exit(
         if cap < shares:
             if request.execution.partial_fill_policy == PartialFillPolicy.REJECT:
                 q.exit_unexecutable[fills.LIQUIDITY_CAP] += 1
-                return
+                return None
             shares = cap
     if shares <= ZERO:
         q.exit_unexecutable[fills.LIQUIDITY_CAP] += 1
-        return
+        return None
     fee_terms = resolve_fee_terms(frame.terms, ts, request.fees, fee_schedules)
     if fee_terms.warning:
         q.fee_warnings[fee_terms.warning] += 1
@@ -1234,6 +1586,365 @@ def _execute_exit(
         portfolio.close(pos, ts, sig.reason, {**(sig.trace or {}), "fills": pos.exit_fills})
     else:
         q.counters["partial_exits"] += 1
+    return None
+
+
+def _basket_execution(legs: list[dict[str, Any]]) -> dict[str, Any]:
+    vols = []
+    for leg in legs:
+        ex = leg["entry_rule_trace"].get("execution") or {}
+        vol = ex.get("eligible_print_volume", ex.get("bar_print_volume"))
+        if vol is not None:
+            vols.append(float(vol))
+    cost = sum((Decimal(leg["entry_price"]) for leg in legs), ZERO)
+    return {
+        "model": "BASKET",
+        "eligible_print_volume": min(vols) if len(vols) == len(legs) else None,
+        "vwap": float(cost),
+        "status": "FILLED",
+    }
+
+
+def _capacity(trades: list[dict[str, Any]], request: BacktestRequest) -> dict[str, Any]:
+    """v3 E5 capacity: per signal, min(requested notional, participation × same-side print
+    notional in the fill bar), summed per month of the signal span (first signal to last
+    attempt; at least one day), at $1,000 and $10,000 starting capital. Sizing modes that scale
+    with capital scale the request; fixed-cash sizing does not."""
+    sizing = request.strategy.sizing
+    part = request.execution.liquidity_participation
+    scales = sizing.mode in (SizingMode.PCT_OF_EQUITY, SizingMode.PCT_OF_INITIAL)
+    cap_per_trade = sizing.max_notional_per_trade
+    rows = [t for t in trades if t.get("basket_role") != "LEG"]
+    stamps = [_from_iso(t["signal_ts"]) for t in rows] + [_from_iso(t["entry_ts"]) for t in rows]
+    span_days = (max(stamps) - min(stamps)) / 86_400 if stamps else 0.0
+    months = max(span_days, 1.0) / 30.4375
+    out: dict[str, Any] = {
+        "signals": len(rows),
+        "months": months,
+        "participation": part,
+        "method": "Σ over signals of min(requested notional, participation × same-side print "
+        "notional in the fill bar), per month of the signal span; requests under PCT sizing "
+        "scale with capital",
+    }
+    for capital in (1000, 10000):
+        captured = 0.0
+        constrained = 0
+        for t in rows:
+            entry = t["entry_rule_trace"] or {}
+            sized = entry.get("sizing") or {}
+            ex = entry.get("execution") or {}
+            if sized.get("requested_notional") is not None:
+                req = float(sized["requested_notional"])
+                if scales:
+                    req *= capital / float(request.starting_capital)
+            else:  # refused before sizing: what the rule would have asked for
+                value = float(sizing.value)
+                price = float(t["entry_ref_price"] or 0.5)
+                req = {
+                    SizingMode.FIXED_CASH: value,
+                    SizingMode.PCT_OF_EQUITY: value * capital,
+                    SizingMode.PCT_OF_INITIAL: value * capital,
+                    SizingMode.FIXED_SHARES: value * price,
+                }[sizing.mode]
+            if cap_per_trade is not None:
+                req = min(req, float(cap_per_trade))
+            if part is None:
+                avail = math.inf
+            else:
+                vol = ex.get("eligible_print_volume", ex.get("bar_print_volume"))
+                px = ex.get("vwap", ex.get("ref_price"))
+                avail = 0.0 if vol is None or px is None else part * float(vol) * float(px)
+            captured += min(req, avail)
+            constrained += avail < req
+        out[str(capital)] = {
+            "notional_per_month": captured / months,
+            "share_size_constrained": constrained / len(rows) if rows else None,
+        }
+    return out
+
+
+def _basket_summaries(trades: list[dict[str, Any]], portfolio: Portfolio) -> list[dict[str, Any]]:
+    """One SUMMARY row per filled basket: Σ over its legs (v3 E3)."""
+    legs_by: dict[str, list[dict[str, Any]]] = {}
+    for t in trades:
+        if t.get("basket_role") == "LEG":
+            legs_by.setdefault(str(t["basket_id"]), []).append(t)
+    out = []
+    for bid, legs in sorted(legs_by.items(), key=lambda kv: kv[1][0]["seq"]):
+
+        def d(key: str, legs: list[dict[str, Any]] = legs) -> Decimal:
+            return sum((Decimal(leg[key]) for leg in legs), ZERO)
+
+        settled = all(leg["exit_reason"] == "MARKET_RESOLVED" for leg in legs)
+        closed = all(leg["exit_ts"] is not None for leg in legs)
+        cost = d("notional") + d("entry_fee")
+        net = d("net_pnl")
+        exit_ts = max((leg["exit_ts"] for leg in legs if leg["exit_ts"]), default=None)
+        out.append(
+            {
+                "seq": portfolio.next_seq(),
+                "condition_id": f"event:{legs[0]['entry_rule_trace'].get('event_id', '')}",
+                "clob_token_id": bid,
+                "side": "BASKET",
+                "signal_ts": legs[0]["signal_ts"],
+                "entry_ts": legs[0]["entry_ts"],
+                "entry_price": _q6(d("entry_price")),  # Σ leg fills = cost per unit
+                "entry_ref_price": _q6(d("entry_ref_price")),
+                "shares": legs[0]["shares"],  # units
+                "notional": _q6(d("notional")),
+                "entry_fee": _q6(d("entry_fee")),
+                "exit_ts": exit_ts,
+                "exit_price": _q6(sum((Decimal(leg["exit_price"] or 0) for leg in legs), ZERO))
+                if closed
+                else None,
+                "exit_fee": _q6(d("exit_fee")) if closed else None,
+                "exit_reason": "MARKET_RESOLVED"
+                if settled
+                else (legs[0]["exit_reason"] if closed else None),
+                "gross_pnl": _q6(d("gross_pnl")),
+                "fees_total": _q6(d("fees_total")),
+                "slippage_cost": _q6(d("slippage_cost")),
+                "net_pnl": _q6(net),
+                "return_pct": _q6(net / cost) if cost else "0.000000",
+                "holding_seconds": max((leg["holding_seconds"] or 0) for leg in legs)
+                if closed
+                else None,
+                "entry_rule_trace": {
+                    "ts": legs[0]["entry_rule_trace"].get("ts"),
+                    "decision": "BASKET_SUMMARY",
+                    "basket": legs[0]["entry_rule_trace"].get("basket"),
+                    "legs": [leg["seq"] for leg in legs],
+                    "sizing": legs[0]["entry_rule_trace"].get("sizing"),
+                    # capacity (v3 E5): a basket's available units are the scarcest leg's
+                    "execution": _basket_execution(legs),
+                    "attempts": 1,
+                },
+                "exit_rule_trace": {
+                    "decision": "BASKET_SETTLED" if settled else "BASKET_OPEN",
+                    "legs": [leg["seq"] for leg in legs],
+                },
+                "fill_status": "PARTIAL"
+                if any(leg["fill_status"] == "PARTIAL" for leg in legs)
+                else "FILLED",
+                "basket_id": bid,
+                "basket_role": "SUMMARY",
+            }
+        )
+    return out
+
+
+def _execute_basket(
+    sig: Signal,
+    k: int,
+    request: BacktestRequest,
+    dataset: Dataset,
+    prepared: dict[str, _Prepared],
+    portfolio: Portfolio,
+    halted: Any,
+    grid: Grid,
+    q: _Quality,
+    marks: dict[str, Decimal],
+    order: Any,
+    can_rest: bool,
+    basket_id: str,
+) -> str | None:
+    """All-or-nothing purchase of one unit of each leg × units (v3 E3). Returns None when the
+    basket opened, RESTING when a leg's limit order waits, else the refusal."""
+    decision: BasketDecision = sig.basket
+    ts = grid.ts(k)
+    cfg = request.execution
+    side_value = "BUY_YES" if decision.kind == "NEGRISK_YES_SET" else "BUY_NO"
+    quotes = []
+    for tok in decision.legs:
+        frame = prepared[tok].frame
+        limit = _limit_for(frame, sig.signal_k, "BUY", order)
+        quotes.append(
+            (
+                tok,
+                fills.quote(
+                    "BUY",
+                    frame,
+                    k,
+                    cfg,
+                    max_stale_minutes=request.max_stale_minutes,
+                    trading_closed=halted(tok, k),
+                    limit=limit,
+                ),
+            )
+        )
+    refused = [(tok, qt) for tok, qt in quotes if qt.status == FillStatus.UNEXECUTABLE]
+
+    def reject(status: FillStatus, reason: str, detail: dict[str, Any]) -> str:
+        q.counters["baskets_unexecutable"] += 1
+        if status == FillStatus.REJECTED_MIN_SIZE:
+            q.counters["signals_rejected_min_size"] += 1
+        else:
+            q.counters["signals_unexecutable"] += 1
+            q.unexecutable[reason] += 1
+        portfolio.rejected_rows.append(
+            {
+                "seq": portfolio.next_seq(),
+                "token_id": basket_id,
+                "condition_id": f"event:{sig.token_id}",
+                "side": "BASKET",
+                "signal_ts": grid.ts(sig.signal_k),
+                "entry_ts": ts,
+                "entry_price": None,
+                "entry_ref_price": None,
+                "fill_status": status.value,
+                "entry_rule_trace": {
+                    **(sig.trace or {}),
+                    "event_id": sig.token_id,
+                    "legs": list(decision.legs),
+                    "sizing": None,
+                    "execution": {"status": status.value, "reason": reason, **detail},
+                    "attempts": 1,
+                    "attempt_refusals": {reason: 1},
+                },
+                "basket_id": basket_id,
+                "basket_role": "SUMMARY",
+            }
+        )
+        return reason
+
+    if refused:
+        if can_rest and all(qt.reason in WAITABLE_REFUSALS for _, qt in refused):
+            return RESTING
+        tok, qt = refused[0]
+        waited_out = order.type == "LIMIT" and qt.reason in WAITABLE_REFUSALS
+        return reject(
+            FillStatus.UNEXECUTABLE_BASKET_LEG,
+            "BASKET_LEG_" + (LIMIT_EXPIRED if waited_out else str(qt.reason)),
+            {"leg": tok, "leg_refusal": qt.reason, **qt.detail},
+        )
+
+    legs = []
+    cost_per_unit = ZERO
+    fee_per_unit = ZERO
+    for tok, qt in quotes:
+        assert qt.fill_price is not None and qt.ref_price is not None
+        terms = prepared[tok].frame.terms
+        if terms.min_order_size is None:
+            return reject(
+                FillStatus.UNEXECUTABLE_BASKET_LEG, "BASKET_LEG_MIN_SIZE_UNKNOWN", {"leg": tok}
+            )
+        ft = resolve_fee_terms(terms, ts, request.fees, dataset.fee_schedules)
+        legs.append((tok, qt, terms, ft))
+        cost_per_unit += qt.fill_price
+        fee_per_unit += fee_amount(Decimal(1), qt.fill_price, ft)
+
+    sizing = request.strategy.sizing
+    step = Decimal(1).scaleb(-request.share_precision)
+    equity = portfolio.equity(marks)
+    value = Decimal(str(sizing.value))
+    requested = {
+        "FIXED_CASH": value,
+        "PCT_OF_EQUITY": value * equity,
+        "PCT_OF_INITIAL": value * request.starting_capital,
+        "FIXED_SHARES": value * cost_per_unit,
+    }[sizing.mode.value]
+    units = (requested / cost_per_unit).quantize(step, rounding=ROUND_DOWN)
+    binding: str | None = None
+    if sizing.max_notional_per_trade is not None:
+        cap = (Decimal(str(sizing.max_notional_per_trade)) / cost_per_unit).quantize(
+            step, rounding=ROUND_DOWN
+        )
+        if cap < units:
+            units, binding = cap, "max_notional_per_trade"
+    cash_cap = (portfolio.cash / (cost_per_unit + fee_per_unit)).quantize(step, rounding=ROUND_DOWN)
+    if cash_cap < units:
+        units, binding = cash_cap, "cash"
+    headroom = Decimal(str(request.strategy.constraints.max_total_exposure_pct)) * equity - (
+        portfolio.positions_value(marks)
+    )
+    exposure_cap = (max(headroom, ZERO) / cost_per_unit).quantize(step, rounding=ROUND_DOWN)
+    if exposure_cap < units:
+        units, binding = exposure_cap, "max_total_exposure_pct"
+    liquidity_limited = False
+    for _tok, qt, _terms, _ft in legs:
+        if qt.max_shares is not None:
+            cap = qt.max_shares.quantize(step, rounding=ROUND_DOWN)
+            if cap < units:
+                units, binding, liquidity_limited = cap, "liquidity", True
+    if liquidity_limited and cfg.partial_fill_policy == PartialFillPolicy.REJECT:
+        return reject(FillStatus.UNEXECUTABLE_BASKET_LEG, "BASKET_LEG_LIQUIDITY_CAP", {})
+    min_units = max(t.min_order_size for _, _, t, _ in legs if t.min_order_size is not None)
+    if units < min_units:
+        target = min_units.quantize(step, rounding=ROUND_UP)
+        affordable = (
+            sizing.min_order_policy == "ROUND_UP"
+            and target * cost_per_unit <= requested * Decimal(str(sizing.round_up_max_multiple))
+            and target * (cost_per_unit + fee_per_unit) <= portfolio.cash
+            and target * cost_per_unit <= max(headroom, ZERO)
+            and all(qt.max_shares is None or target <= qt.max_shares for _, qt, _, _ in legs)
+        )
+        if not affordable:
+            q.counters["signals_rejected_min_size"] += 1
+            return reject(
+                FillStatus.REJECTED_MIN_SIZE,
+                "BELOW_MIN_ORDER_SIZE",
+                {"units": str(units), "min_units": str(min_units)},
+            )
+        units, binding = target, "min_order_size"
+    if units <= ZERO:
+        return reject(FillStatus.REJECTED_MIN_SIZE, "BELOW_MIN_ORDER_SIZE", {"units": str(units)})
+
+    sizing_trace = {
+        "mode": sizing.mode.value,
+        "requested_notional": _q6(requested),
+        "final_notional": _q6(units * cost_per_unit),
+        "size_binding_constraint": binding,
+        "equity": _q6(equity),
+        "units": str(units),
+        "cost_per_unit": _q6(cost_per_unit),
+        "fee_per_unit": _q6(fee_per_unit),
+    }
+    status = FillStatus.PARTIAL if liquidity_limited else FillStatus.FILLED
+    for tok, qt, terms, ft in legs:
+        assert qt.fill_price is not None and qt.ref_price is not None
+        fee = fee_amount(units, qt.fill_price, ft)
+        if ft.label:
+            q.fee_labels.add(ft.label)
+        portfolio.open_position(
+            Position(
+                seq=portfolio.next_seq(),
+                token_id=tok,
+                condition_id=terms.condition_id,
+                event_id=terms.event_id,
+                outcome_index=prepared[tok].frame.token.outcome_index,
+                side=side_value,
+                signal_ts=grid.ts(sig.signal_k),
+                entry_ts=ts,
+                entry_price=qt.fill_price,
+                entry_ref_price=qt.ref_price,
+                initial_shares=units,
+                entry_fee=fee,
+                fee_terms=ft,
+                entry_trace={
+                    **(sig.trace or {}),
+                    "event_id": sig.token_id,
+                    "basket": {**decision.trace, "legs": list(decision.legs)},
+                    "sizing": sizing_trace,
+                    "execution": {
+                        **qt.detail,
+                        "shares": str(units),
+                        "fee": str(fee),
+                        "status": status.value,
+                    },
+                    "attempts": 1,
+                    "attempt_refusals": {},
+                    "exit_plan": [],
+                    "universe": [],
+                    "clauses": [],
+                },
+                fill_status=status,
+                basket_id=basket_id,
+            )
+        )
+        marks[tok] = fills.to_decimal(prepared[tok].frame.price_at(k))
+    q.counters["baskets_filled"] += 1
+    q.counters["signals_filled"] += 1
+    return None
 
 
 def _build_result(
@@ -1288,6 +1999,8 @@ def _build_result(
                     **({"flags": pos.flags} if pos.flags else {}),
                 },
                 "fill_status": pos.fill_status.value,
+                "basket_id": pos.basket_id,
+                "basket_role": "LEG" if pos.basket_id is not None else None,
             }
         )
     for row in portfolio.rejected_rows:
@@ -1318,8 +2031,11 @@ def _build_result(
                 "entry_rule_trace": row["entry_rule_trace"],
                 "exit_rule_trace": None,
                 "fill_status": row["fill_status"],
+                "basket_id": row.get("basket_id"),
+                "basket_role": row.get("basket_role"),
             }
         )
+    trades.extend(_basket_summaries(trades, portfolio))
     trades.sort(key=lambda t: t["seq"])
 
     equity: list[dict[str, Any]] = []
@@ -1359,6 +2075,13 @@ def _build_result(
     ]
 
     bias_warnings: list[str] = []
+    if request.strategy.order.type == "MARKET":
+        bias_warnings.append("MARKET ORDER — NO PRICE PROTECTION")
+    if (
+        request.execution.model.value == "TRADE_PRINT"
+        and request.execution.liquidity_side.value == "BOTH"
+    ):
+        bias_warnings.append("BOTH-SIDE LIQUIDITY — OPTIMISTIC")
     selection = (dataset.selection or {}).get("selection_uses_final_volume")
     if selection:
         safe = float(selection["survivorship_free_for_min_volume_asof_at_least"])
@@ -1377,6 +2100,7 @@ def _build_result(
         execution_model=request.execution.model.value,
         fee_mode=request.fees.mode.value,
         extra_warnings=bias_warnings,
+        capacity=_capacity(trades, request),
     )
     c = q.counters
     bars_total = c["bars_total"]
@@ -1434,6 +2158,13 @@ def _build_result(
         "entries_rounded_up_to_min_size": c["entries_rounded_up_to_min_size"],
         "signals_pending_at_end": c["signals_pending_at_end"],
         "signals_cancelled_by_settlement": c["signals_cancelled_by_settlement"],
+        # v3 E1/E3
+        "signals_limit_expired": c["signals_limit_expired"],
+        "baskets_signalled": c["baskets_signalled"],
+        "baskets_filled": c["baskets_filled"],
+        "baskets_unexecutable": c["baskets_unexecutable"],
+        "order_type": request.strategy.order.type,
+        "liquidity_side": request.execution.liquidity_side.value,
         "signals_blocked_by_constraint": dict(sorted(q.blocked_by_constraint.items())),
         "exit_attempts_unexecutable": dict(sorted(q.exit_unexecutable.items())),
         "partial_exits": c["partial_exits"],

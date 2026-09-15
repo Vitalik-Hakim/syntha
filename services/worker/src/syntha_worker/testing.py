@@ -51,10 +51,10 @@ def seed_minimal_dataset(url: str) -> str:
         conn.execute("""INSERT INTO price_bars (clob_token_id, ts, price, is_stale, source)
                         SELECT 'N1', '2026-01-01'::timestamptz + make_interval(mins => g), 0.60, true, 'prices_history'
                         FROM generate_series(0, 9) g""")
-        conn.execute("""INSERT INTO trade_prints (ts, print_key, condition_id, clob_token_id, price, size, side) VALUES
-                        ('2025-12-31 23:00+00', 'k0', 'M1', 'Y1', 0.5, 100, 'BUY'),
-                        ('2026-01-01 00:02:10+00', 'k1', 'M1', 'Y1', 0.41, 200, 'BUY'),
-                        ('2026-01-01 00:03:10+00', 'k2', 'M1', 'Y1', 0.42, 300, 'SELL')""")
+        conn.execute("""INSERT INTO trade_prints (ts, print_key, condition_id, clob_token_id, price, size, side, proxy_wallet) VALUES
+                        ('2025-12-31 23:00+00', 'k0', 'M1', 'Y1', 0.5, 100, 'BUY', NULL),
+                        ('2026-01-01 00:02:10+00', 'k1', 'M1', 'Y1', 0.41, 200, 'BUY', '0xwallet-a'),
+                        ('2026-01-01 00:03:10+00', 'k2', 'M1', 'Y1', 0.42, 300, 'SELL', '0xwallet-a')""")
         conn.execute("""INSERT INTO fee_schedules (venue, fee_type, rate, exponent, applies_to, effective_from, source_url)
                         VALUES ('international', 'sports_fees_v2', 0.03, 1, 'ALL_OPEN_MARKETS', '2025-01-01', 'x')""")
         conn.execute("""INSERT INTO dataset_versions (id, built_at, content_hash) VALUES

@@ -14,12 +14,19 @@ class Side(StrEnum):
 
 
 class FillStatus(StrEnum):
-    """§7 bt_trades.fill_status."""
+    """§7 bt_trades.fill_status, plus the v3 §3 refusals."""
 
     FILLED = "FILLED"
     PARTIAL = "PARTIAL"
     UNEXECUTABLE = "UNEXECUTABLE"
     REJECTED_MIN_SIZE = "REJECTED_MIN_SIZE"
+    UNEXECUTABLE_LIMIT_EXPIRED = (
+        "UNEXECUTABLE_LIMIT_EXPIRED"  # v3 E1: no fill at the limit within the TTL
+    )
+    UNEXECUTABLE_BASKET_LEG = "UNEXECUTABLE_BASKET_LEG"  # v3 E3: a leg refused, nothing bought
+
+
+EXECUTED_STATUSES = frozenset({FillStatus.FILLED.value, FillStatus.PARTIAL.value})
 
 
 class ExitReason(StrEnum):
@@ -34,6 +41,21 @@ class ExitReason(StrEnum):
     END_OF_BACKTEST = "END_OF_BACKTEST"
     FORCED_EXPOSURE_LIMIT = "FORCED_EXPOSURE_LIMIT"
     DATA_GAP = "DATA_GAP"
+    WALLET_SELL = "WALLET_SELL"  # v3 E4: the wallet whose print triggered the entry sold
+
+
+class LiquiditySide(StrEnum):
+    """v3 E2 — which taker prints count as liquidity for a fill."""
+
+    SAME_SIDE = "SAME_SIDE"  # buys consume what other takers bought; sells, what they sold
+    BOTH = "BOTH"  # v2 behaviour: every print in the bar; optimistic
+
+
+class OrderType(StrEnum):
+    """v3 E1."""
+
+    LIMIT = "LIMIT"
+    MARKET = "MARKET"
 
 
 class RunStatus(StrEnum):

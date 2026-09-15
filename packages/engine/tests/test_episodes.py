@@ -52,6 +52,9 @@ def _request() -> BacktestRequest:
                 "name": "ep",
                 "entry": {"all": [{"feature": "price", "op": "lte", "value": 0.30}]},
                 "sizing": {"mode": "FIXED_CASH", "value": 5},
+                # episode mechanics are defined on single-bar attempts; resting limit orders
+                # (v3 E1) are covered by their own tests
+                "order": {"type": "MARKET"},
             },
             "execution": {
                 "model": "TRADE_PRINT",

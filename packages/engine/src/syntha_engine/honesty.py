@@ -12,22 +12,29 @@ Run with every backtest, seeded from the request's seed, so the answers are repr
 - Random-entry baseline (§15.3): the same number of episodes with the same retry windows, placed
   uniformly at random over every eligible (bar, market) pair.
 - Buy and hold to resolution (§8.3): the built-in benchmark on the strategy's own universe.
+- Cluster bootstrap (v3 E5): trades of one event, or one UTC day, are one draw; the wider of the
+  two intervals is the headline. The primary hold-to-resolution metric is net return per dollar
+  risked (Σ net / Σ notional), whose cluster SE gives the minimum detectable effect on a negative
+  (MDE = 2.48 × SE: 80% power, one-sided 5%).
+- Fee counterfactual (v3 E5): the same run under HISTORICAL and CURRENT fees; CURRENT decides.
 
 No I/O: the caller supplies the dataset and the buy-and-hold strategy document.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import dataclasses
+from collections.abc import Callable, Sequence
 from decimal import Decimal
 from typing import Any
 
 import numpy as np
 
-from syntha_contracts.backtest import BacktestRequest, HonestyConfig
-from syntha_contracts.enums import Side
+from syntha_contracts.backtest import BacktestRequest, FeeConfig, HonestyConfig
+from syntha_contracts.enums import FeeMode, Side
 from syntha_contracts.strategy import StrategyDSL
 from syntha_engine.data import Dataset, SettlementTable
+from syntha_engine.metrics.core import executed_trades
 from syntha_engine.runner import (
     BacktestResult,
     ForcedSignals,
@@ -39,11 +46,15 @@ from syntha_engine.runner import (
 
 EDGE_PERCENTILE = 95.0  # PRD §15.3: anything under ~95 is not evidence of edge
 LOW_SAMPLE_TRADES = 30
+MDE_MULTIPLIER = 2.48  # v3 E5: z(0.95) + z(0.80) = 1.645 + 0.842, one-sided 5%, 80% power
+CLUSTER_KEYS = ("event", "day")
+DECIDING_FEE_MODE = "CURRENT"  # v3 E5: an edge that only existed fee-free is not an edge
 
 _STREAM_BOOTSTRAP = 1
 _STREAM_PERMUTATION = 2
 _STREAM_RANDOM = 3
 _STREAM_BUY_AND_HOLD = 4
+_STREAM_CLUSTER = 5
 
 Progress = Callable[[str, float], None]
 
@@ -85,13 +96,26 @@ def share_beaten(real: float, values: np.ndarray) -> float | None:
 # ------------------------------------------------------------------ bootstrap (§15.2)
 
 
+def _resampled_sums(values: np.ndarray, iterations: int, rng: np.random.Generator) -> np.ndarray:
+    """Σ of `n` draws with replacement from `values` (rows), `iterations` times, in chunks so the
+    index array stays around 16 MB. Every value column is summed with the same draws."""
+    n = values.shape[0]
+    sums = np.empty((iterations, values.shape[1]))
+    chunk = max(1, 2_000_000 // n)
+    for start in range(0, iterations, chunk):
+        size = min(chunk, iterations - start)
+        idx = rng.integers(0, n, size=(size, n))
+        sums[start : start + size] = values[idx].sum(axis=1)
+    return sums
+
+
 def bootstrap(
     trades: list[dict[str, Any]],
     starting_capital: Decimal,
     iterations: int,
     rng: np.random.Generator,
 ) -> dict[str, Any]:
-    executed = [t for t in trades if t["fill_status"] in ("FILLED", "PARTIAL")]
+    executed = executed_trades(trades)
     n = len(executed)
     base: dict[str, Any] = {
         "iterations": iterations,
@@ -110,12 +134,7 @@ def bootstrap(
         }
     pnl = np.array([float(Decimal(t["net_pnl"])) for t in executed])
     capital = float(starting_capital)
-    sums = np.empty(iterations)
-    chunk = max(1, 2_000_000 // n)  # bound memory at ~16 MB of indices per chunk
-    for start in range(0, iterations, chunk):
-        size = min(chunk, iterations - start)
-        idx = rng.integers(0, n, size=(size, n))
-        sums[start : start + size] = pnl[idx].sum(axis=1)
+    sums = _resampled_sums(pnl[:, None], iterations, rng)[:, 0]
     roi = sums / capital
     means = sums / n
     return {
@@ -126,6 +145,172 @@ def bootstrap(
         "expectancy_ci95": [float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))],
         "prob_loss": float(np.mean(roi <= 0)),
         "note": None,
+    }
+
+
+# ------------------------------------------------------------------ cluster bootstrap (v3 E5)
+
+
+def cluster_labels(trades: Sequence[dict[str, Any]], dataset: Dataset) -> dict[str, list[str]]:
+    """Per executed trade, its event (falling back to the market) and its UTC entry day."""
+    event: list[str] = []
+    day: list[str] = []
+    for t in trades:
+        cid = str(t["condition_id"])
+        if cid.startswith("event:"):
+            ev = cid.removeprefix("event:")
+        else:
+            terms = dataset.markets.get(cid)
+            ev = (terms.event_id if terms is not None and terms.event_id else None) or cid
+        event.append(ev)
+        day.append(str(t["entry_ts"])[:10])
+    return {"event": event, "day": day}
+
+
+def cluster_bootstrap(
+    trades: Sequence[dict[str, Any]],
+    labels: Sequence[str],
+    starting_capital: Decimal,
+    iterations: int,
+    rng: np.random.Generator,
+    key: str,
+) -> dict[str, Any]:
+    """Resample clusters of executed trades with replacement (clusters in order of first
+    appearance, so one trade per cluster reproduces the trade-level bootstrap draw for draw).
+    Statistics: ROI = Σ net / capital and return per dollar = Σ net / Σ notional."""
+    executed = executed_trades(trades)
+    order: dict[str, int] = {}
+    codes = np.array([order.setdefault(lbl, len(order)) for lbl in labels], dtype=np.int64)
+    n_clusters = len(order)
+    base: dict[str, Any] = {"key": key, "n_trades": len(executed), "n_clusters": n_clusters}
+    if iterations == 0 or not executed:
+        return {
+            **base,
+            "roi_ci90": None,
+            "return_per_dollar_ci90": None,
+            "se_return_per_dollar": None,
+            "se_roi": None,
+            "mde_80_return_per_dollar": None,
+            "mde_80_roi": None,
+            "note": "disabled" if iterations == 0 else "no executed trades to resample",
+        }
+    pnl = np.array([float(Decimal(t["net_pnl"])) for t in executed])
+    notional = np.array([float(Decimal(t["notional"])) for t in executed])
+    per_cluster = np.zeros((n_clusters, 2))
+    np.add.at(per_cluster[:, 0], codes, pnl)
+    np.add.at(per_cluster[:, 1], codes, notional)
+    sums = _resampled_sums(per_cluster, iterations, rng)
+    roi = sums[:, 0] / float(starting_capital)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rpd = np.where(sums[:, 1] > 0, sums[:, 0] / sums[:, 1], 0.0)
+    se_rpd = float(rpd.std(ddof=1)) if iterations > 1 else 0.0
+    se_roi = float(roi.std(ddof=1)) if iterations > 1 else 0.0
+    return {
+        **base,
+        "roi": float(pnl.sum() / float(starting_capital)),
+        "roi_ci90": [float(np.percentile(roi, 5)), float(np.percentile(roi, 95))],
+        "return_per_dollar": float(pnl.sum() / notional.sum()) if notional.sum() > 0 else None,
+        "return_per_dollar_ci90": [float(np.percentile(rpd, 5)), float(np.percentile(rpd, 95))],
+        "se_return_per_dollar": se_rpd,
+        "se_roi": se_roi,
+        "mde_80_return_per_dollar": MDE_MULTIPLIER * se_rpd,
+        "mde_80_roi": MDE_MULTIPLIER * se_roi,
+        "note": "one cluster: the interval is degenerate" if n_clusters == 1 else None,
+    }
+
+
+def _width(ci: list[float] | None) -> float:
+    return -1.0 if ci is None else ci[1] - ci[0]
+
+
+def cluster_report(
+    prep: Preparation, trades: Sequence[dict[str, Any]], iterations: int
+) -> dict[str, Any]:
+    """Both clusterings; the wider return-per-dollar interval is the headline (v3 E5)."""
+    executed = executed_trades(trades)
+    labels = cluster_labels(executed, prep.dataset)
+    by_key = {
+        key: cluster_bootstrap(
+            executed,
+            labels[key],
+            prep.request.starting_capital,
+            iterations,
+            _rng(prep.request, _STREAM_CLUSTER, i),
+            key,
+        )
+        for i, key in enumerate(CLUSTER_KEYS)
+    }
+    headline_key = max(CLUSTER_KEYS, key=lambda k: _width(by_key[k]["return_per_dollar_ci90"]))
+    head = by_key[headline_key]
+    return {
+        "iterations": iterations,
+        "method": "resample clusters of executed trades with replacement; trades of the same "
+        "event (or the same UTC entry day) are one draw; the wider interval is the headline",
+        "by_key": by_key,
+        "headline_key": headline_key,
+        "roi_ci90": head["roi_ci90"],
+        "return_per_dollar": head.get("return_per_dollar"),
+        "return_per_dollar_ci90": head["return_per_dollar_ci90"],
+        "mde_80": head["mde_80_return_per_dollar"],
+        "mde_80_roi": head["mde_80_roi"],
+        "n_clusters": {k: by_key[k]["n_clusters"] for k in CLUSTER_KEYS},
+    }
+
+
+# ------------------------------------------------------------------ fee counterfactual (v3 E5)
+
+
+def fee_counterfactual(prep: Preparation, result: BacktestResult) -> dict[str, Any]:
+    """The run under HISTORICAL fees (what happened) and CURRENT fees (what it costs today), on
+    the same preparation. Decisions use CURRENT."""
+    run_mode = prep.request.fees.mode.value
+    out: dict[str, Any] = {
+        "decides": DECIDING_FEE_MODE,
+        "run_mode": run_mode,
+        "method": "the same signals, sizing and execution re-simulated with the other fee mode; "
+        "HISTORICAL uses the schedule at each fill, CURRENT today's schedule for every fill",
+    }
+    for mode in (FeeMode.HISTORICAL, FeeMode.CURRENT):
+        if mode.value == run_mode:
+            r = result
+        else:
+            req = prep.request.model_copy(
+                update={
+                    "fees": FeeConfig(mode=mode),
+                    "honesty": HonestyConfig(
+                        bootstrap_iterations=0,
+                        permutations=0,
+                        random_baselines=0,
+                        buy_and_hold=False,
+                    ),
+                }
+            )
+            outcome = simulate(dataclasses.replace(prep, request=req), near_misses=False)
+            assert isinstance(outcome, BacktestResult)
+            r = outcome
+        m = r.metrics
+        out[mode.value] = {
+            "roi": m["roi"],
+            "net_profit": m["net_profit"],
+            "return_per_dollar": m["return_per_dollar"]["pooled"],
+            "fees": m["cost_attribution"]["fees"],
+            "n_trades": m["n_trades"],
+        }
+    hist, cur = out["HISTORICAL"], out["CURRENT"]
+    out["roi_difference"] = cur["roi"] - hist["roi"]
+    out["positive_only_under_historical"] = bool(hist["roi"] > 0 >= cur["roi"])
+    return out
+
+
+def honesty_metrics(honesty: dict[str, Any]) -> dict[str, Any]:
+    """The E5 fields every stored `metrics` carries next to the run's own metrics."""
+    s = honesty["summary"]
+    return {
+        "mde_80": s["mde_80"],
+        "cluster_ci90": s["cluster_ci90"],
+        "cluster_key": s["cluster_key"],
+        "return_per_dollar_ci90": s["return_per_dollar_ci90"],
+        "fee_counterfactual": honesty["fee_counterfactual"],
     }
 
 
@@ -390,8 +575,11 @@ def compute_honesty(
         cfg.bootstrap_iterations,
         _rng(request, _STREAM_BOOTSTRAP),
     )
+    clusters = cluster_report(prep, result.trades, cfg.bootstrap_iterations)
     perm = permutation_test(prep, result, real_roi, cfg.permutations, report)
     rand = random_baseline(prep, result, real_roi, cfg.random_baselines, report)
+    report("fee_counterfactual", 0.0)
+    fees = fee_counterfactual(prep, result)
     bh = None
     if cfg.buy_and_hold and buy_and_hold_dsl is not None:
         report("buy_and_hold", 0.0)
@@ -419,6 +607,8 @@ def compute_honesty(
         "seed": request.seed,
         "config": cfg.model_dump(mode="json"),
         "bootstrap": boot,
+        "cluster_bootstrap": clusters,
+        "fee_counterfactual": fees,
         "permutation": perm,
         "random_baseline": rand,
         "buy_and_hold": bh,
@@ -429,6 +619,15 @@ def compute_honesty(
             "random_baseline_percentile": rand["percentile"],
             "roi": real_roi,
             "roi_ci90": boot["roi_ci90"],
+            # v3 E5: the headline interval is the wider cluster interval, never the trade-level one
+            "cluster_ci90": clusters["roi_ci90"],
+            "cluster_key": clusters["headline_key"],
+            "return_per_dollar": result.metrics["return_per_dollar"]["pooled"],
+            "return_per_dollar_ci90": clusters["return_per_dollar_ci90"],
+            "mde_80": clusters["mde_80"],
+            "roi_current_fees": fees["CURRENT"]["roi"],
+            "roi_historical_fees": fees["HISTORICAL"]["roi"],
+            "deciding_fee_mode": DECIDING_FEE_MODE,
             "buy_and_hold_roi": None if bh is None else bh["roi"],
             "beats_buy_and_hold": None if bh is None else real_roi > bh["roi"],
             "roi_minus_buy_and_hold": None if bh is None else real_roi - bh["roi"],

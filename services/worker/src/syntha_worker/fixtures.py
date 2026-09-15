@@ -4,7 +4,10 @@ A fixture directory holds:
 - `fixture.json`: markets, fee schedules, the BacktestRequest, and the hand-derived expected
   result with its derivation written out;
 - `bars.csv`: `clob_token_id,minute,price` (minutes after `start`);
-- `prints.csv` (optional): `clob_token_id,minute,second,price,size,side`.
+- `prints.csv` (optional): `clob_token_id,minute,second,price,size,side[,wallet]` — `wallet`
+  (v3 E4) is any label; ids are assigned in order of first appearance.
+
+Markets may carry `neg_risk` and `is_catch_all` (v3 E3).
 """
 
 from __future__ import annotations
@@ -79,6 +82,8 @@ def load_fixture(directory: Path) -> Fixture:
             fee_type=m.get("fee_type"),
             fee_rate=None if m.get("fee_rate") is None else Decimal(m["fee_rate"]),
             fee_exponent=m.get("fee_exponent"),
+            is_catch_all=m.get("is_catch_all"),
+            neg_risk=m.get("neg_risk"),
         )
         settlements[cid] = Settlement(
             resolution=m.get("resolution", "UNRESOLVED"),
@@ -95,11 +100,16 @@ def load_fixture(directory: Path) -> Fixture:
     bars: dict[str, list[tuple[int, float]]] = {t: [] for t in token_meta}
     for row in _read_csv(directory / "bars.csv"):
         bars[row["clob_token_id"]].append((t0 + int(row["minute"]) * 60, float(row["price"])))
-    prints: dict[str, list[tuple[int, float, float, int]]] = {t: [] for t in token_meta}
+    prints: dict[str, list[tuple[int, float, float, int, int]]] = {t: [] for t in token_meta}
+    wallets: dict[str, int] = {}
     for row in _read_csv(directory / "prints.csv"):
         ts = t0 + int(row["minute"]) * 60 + int(row.get("second") or 0)
         side = 1 if row["side"].upper() == "BUY" else -1
-        prints[row["clob_token_id"]].append((ts, float(row["price"]), float(row["size"]), side))
+        label = (row.get("wallet") or "").strip()
+        wallet = wallets.setdefault(label, len(wallets)) if label else -1
+        prints[row["clob_token_id"]].append(
+            (ts, float(row["price"]), float(row["size"]), side, wallet)
+        )
 
     tokens: dict[str, TokenData] = {}
     for tok, (cid, idx, name) in token_meta.items():
@@ -116,6 +126,7 @@ def load_fixture(directory: Path) -> Fixture:
             print_price=np.array([x[1] for x in p], dtype=np.float64),
             print_size=np.array([x[2] for x in p], dtype=np.float64),
             print_side=np.array([x[3] for x in p], dtype=np.int8),
+            print_wallet=np.array([x[4] for x in p], dtype=np.int32) if wallets else None,
         )
 
     schedules = tuple(
@@ -146,6 +157,7 @@ def load_fixture(directory: Path) -> Fixture:
             tokens=tokens,
             fee_schedules=schedules,
             dataset_version_id=f"fixture:{spec['name']}",
+            wallets=tuple(wallets),
         ),
         settlement=SettlementTable(settlements),
         expected=spec["expected"],

@@ -1,0 +1,5 @@
+clob_token_id,minute,second,price,size,side,wallet
+yes1,0,10,0.40,200,BUY,W1
+yes1,1,10,0.40,100,BUY,W2
+yes1,3,10,0.42,100,SELL,W1
+yes1,4,10,0.42,100,SELL,W3

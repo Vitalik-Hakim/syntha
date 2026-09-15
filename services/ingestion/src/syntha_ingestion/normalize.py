@@ -330,9 +330,10 @@ def trade_lines(
             accepted += 1
             key = print_key(t)
             ts = int(t["timestamp"])
+            wallet = str(t.get("proxy_wallet") or "").strip() or "\\N"  # v3 E4; \N = NULL
             line = (
                 f"{_epoch_ts(ts)}\t{key}\t{t['condition_id']}\t{tok}\t"
-                f"{float(price):.6f}\t{float(size):.6f}\t{side}\n"
+                f"{float(price):.6f}\t{float(size):.6f}\t{side}\t{wallet}\n"
             )
             rows[key] = (ts, tok, line)
 
@@ -486,7 +487,7 @@ def rebuild(settings: IngestSettings) -> RebuildResult:
             _copy_lines(
                 cur,
                 "trade_prints",
-                "ts, print_key, condition_id, clob_token_id, price, size, side",
+                "ts, print_key, condition_id, clob_token_id, price, size, side, proxy_wallet",
                 trades,
             )
             n_bars = _copy_lines(

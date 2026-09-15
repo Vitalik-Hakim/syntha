@@ -108,6 +108,7 @@ class PositionView:
     entry_price: float
     shares: float
     holding_minutes: float
+    signal_wallet: int | None = None  # v3 E4: id of the wallet whose print triggered the entry
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,3 +119,37 @@ class MarketView:
     features: FeatureView
     market: MarketStatic
     position: PositionView | None
+    # v3 E4: the position's signal wallet printed a taker SELL on this token in the current bar
+    wallet_sold: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SiblingView:
+    """One market of an event as visible at `now` (v3 E3): pre-trade facts and the current bar's
+    same-side prints. No resolution, no future."""
+
+    condition_id: str
+    clob_token_id: str
+    outcome_index: int
+    price: float | None
+    tick_size: float
+    min_order_size: float | None
+    is_catch_all: bool
+    print_volume: float  # same-side prints in the current bar (shares)
+    print_vwap: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class EventView:
+    """An event's sibling markets open at `now`, point-in-time (v3 E3, §4.2): a market listed
+    after `now` is not in the set, and `catch_all_present` reflects only listed catch-alls."""
+
+    now: datetime
+    event_id: str
+    siblings: tuple[SiblingView, ...]
+    catch_all_present: bool
+    neg_risk: bool = False  # every listed sibling is a neg-risk market (one YES among them)
+
+    @property
+    def n_markets_open(self) -> int:
+        return len(self.siblings)

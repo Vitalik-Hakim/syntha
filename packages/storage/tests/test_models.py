@@ -21,6 +21,7 @@ def test_every_prd_table_is_mapped() -> None:
         "orderbook_deltas",
         "bt_ledger",
         "bt_near_misses",
+        "recorder_watchlist",  # PRD v3 E7
     }
 
 

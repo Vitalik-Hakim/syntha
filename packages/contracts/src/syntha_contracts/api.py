@@ -180,6 +180,8 @@ class TradeRow(BaseModel):
     attempts: int | None
     refusal_reason: str | None
     question: str | None
+    basket_id: str | None = None  # v3 E3
+    basket_role: str | None = None  # LEG | SUMMARY
 
 
 class TradeDetail(TradeRow):

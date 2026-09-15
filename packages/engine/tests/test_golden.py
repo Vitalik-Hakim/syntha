@@ -32,6 +32,13 @@ REQUIRED = {
     "compounding",
     "fee_schedule_change",
     "stale_data",
+    # PRD v3 §3 (M8 acceptance)
+    "limit_fill",
+    "limit_expired",
+    "same_side_cap",
+    "both_side_liquidity",
+    "basket_all_or_nothing",
+    "wallet_sell",
 }
 
 

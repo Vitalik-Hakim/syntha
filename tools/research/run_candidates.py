@@ -14,10 +14,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import uuid
 from pathlib import Path
 
 import psycopg
+
+sys.path.insert(0, str(Path(__file__).parent))
+from register import require_registered
 
 from syntha_contracts.backtest import PRESETS, BacktestRequest
 from syntha_worker.loader import LoadedDataset, load_dataset
@@ -36,10 +40,11 @@ def main() -> None:
     url = os.environ.get("SYNTHA_DATABASE_URL", "postgresql://syntha:syntha@localhost:5432/syntha")
     url = url.replace("postgresql+psycopg://", "postgresql://")
 
+    documents = [(path, json.loads(Path(path).read_text())) for path in args.files]
+    require_registered(documents)  # PRD v3 §3.6
     results = []
     cache: dict[tuple[object, ...], LoadedDataset] = {}
-    for path in args.files:
-        dsl = json.loads(Path(path).read_text())
+    for _path, dsl in documents:
         base = BacktestRequest.model_validate(
             {
                 "strategy": dsl,

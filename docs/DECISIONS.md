@@ -442,3 +442,72 @@ row and noting the date.
   its description, because a documented negative from a pre-registered search is the product's
   point (PRD §15). Seven months of data are in the normalized layer (3,669 markets, 247 M bars;
   a full rebuild now takes about 41 minutes).
+
+### M8 — PRD v3 engine and instruments (engineering)
+
+- **Marketable-limit orders (E1).** A DSL `order` block (`LIMIT` default, `limit_offset_ticks`
+  1, `ttl_bars` 5) applies to entries and exits. The limit is the *signal bar's* price ± k ticks.
+  An order is re-quoted every bar of its TTL against the same-side prints at or inside the limit;
+  a fill is the eligible VWAP, slipped and quantised against the trader, then capped at the limit
+  (`execution.fills._finish`). While it waits the signal stays pending (the episode's attempt is
+  pending, so the strategy does not re-signal the same token); when the TTL lapses the row is
+  `UNEXECUTABLE_LIMIT_EXPIRED` / `LIMIT_EXPIRED` with the best price seen and bars waited, and the
+  episode may re-signal later. `MARKET` keeps the v2 path and every result under it carries
+  "MARKET ORDER — NO PRICE PROTECTION". `max_fill_vs_signal` (M7's proposed guard) is subsumed.
+- **Same-side liquidity (E2).** `execution.liquidity_side` defaults to `SAME_SIDE`: a buy's
+  reference VWAP, participation cap and worst print come from taker-BUY prints, a sell's from
+  taker-SELL prints. `BOTH` is the v2 behaviour, kept for comparison and flagged "BOTH-SIDE
+  LIQUIDITY — OPTIMISTIC". The golden fixtures pin both: `same_side_cap`, `both_side_liquidity`.
+- **Baskets (E3).** `entry.basket` (`NEGRISK_YES_SET` on a `BUY_YES` universe, `NEGRISK_NO_SET`
+  on `BUY_NO`; no exit rules — a set is held to settlement) is evaluated per event on an
+  `EventView` built point-in-time from the same frames: siblings listed by the bar's close, priced,
+  not halted; `catch_all_present` and `neg_risk` from listed siblings only. A vectorised
+  pre-screen (Σ open prices vs payoff − min_edge, without fees or ticks) picks the bars worth
+  checking, so hold-to-resolution baskets keep the fast bar skip. Execution is all-or-nothing in
+  one bar: every leg is quoted under E1/E2; a waitable refusal on any leg rests the whole basket
+  within the TTL, any other refusal (or expiry) writes one `UNEXECUTABLE_BASKET_LEG` row and buys
+  nothing. Units come from the sizing mode on the basket's cost per unit, then the caps in the
+  usual order (max notional, cash, exposure headroom, the scarcest leg's liquidity), then the
+  minimum order size with `ROUND_UP` policy. Legs are ordinary positions sharing `basket_id`;
+  the SUMMARY row (condition `event:<id>`, token = basket id, side `BASKET`) is synthesised when
+  the result is built. Constraints count a basket once (`Portfolio.open_count`), exposure counts
+  every leg. Statistics count ordinary trades plus SUMMARY rows and exclude LEG rows
+  (`metrics.core.executed_trades`): a basket is one bet. Known limits, on purpose for M8: universe
+  filters (`min_volume_asof`, `min_time_to_resolution`) are not applied to baskets, lean null
+  runs skip baskets (so the permutation test reports "no signals to permute" for basket
+  strategies), and the replay of a SUMMARY row shows its first leg.
+- **Print triggers and wallet exits (E4).** `entry.print_trigger` is a per-bar feature: the
+  largest qualifying taker print (side, minimum notional, optional wallet allow-list) known at
+  the bar's close, executed the next bar like any signal. The wallet id travels on the signal
+  and the position; `WALLET_SELL` fires on the first bar in which that wallet prints a taker
+  SELL on the same token at or after entry. Wallets are integer ids into `Dataset.wallets`.
+- **Statistics (E5).** Cluster bootstrap by `event_id` and by UTC entry day over the same
+  resampled-sum machinery as the trade-level bootstrap; clusters are numbered in order of first
+  appearance so one trade per cluster reproduces the trade-level interval draw for draw
+  (tested). The wider return-per-dollar interval is the headline (`summary.cluster_ci90`,
+  `cluster_key`). Return per dollar risked = Σ net / Σ notional (pooled) and the mean of per-trade
+  ratios; MDE@80% = 2.48 × the bootstrap SE of return per dollar under the headline clustering.
+  Capacity is computed from the traces (`requested_notional`, eligible or bar print volume,
+  VWAP) at $1,000 and $10,000, per month of the signal span. The fee counterfactual re-simulates
+  the same preparation with the other fee mode (`dataclasses.replace(prep, request=…)`: fees are
+  resolved at execution, so nothing else changes); CURRENT decides. `honesty_metrics()` copies
+  MDE, the cluster interval and the counterfactual into the stored `metrics` so every run's
+  metrics carry them.
+- **Register (E6).** `tools/research/register.py` keeps `docs/research/REGISTER.md`; `sweep.py`
+  and `run_candidates.py` refuse definitions without a row (`require_registered`); `pooled.py`
+  reports best-of-N per family with N from the register, padding unrun registrations with the
+  family's own null draws. The 44 M7 configurations were retro-registered with
+  `data_seen_at_registration` stating that every month had already been seen, and the notable
+  outcomes recorded on their rows; that is an honest record, not a pre-registration.
+- **Recorder watchlist v2 (E7).** `recorder_watchlist` (point-in-time rows) is filled by
+  `syntha_recorder.watchlist`: 4 categories (fee-type stems, default sports/crypto/politics/
+  economics) × {binary, multi (neg-risk)} × {thin: $100–2,000, liquid: ≥ $20,000 of 24h volume},
+  3 markets each (48, inside 40–60), from the 1,000 most traded open markets, refilled on every
+  refresh; closed markets are retired via `condition_ids` lookups. `--add` watches specific
+  condition ids (`manual` | `structural_candidate`) for the S4 scanner. `last_trade_price`
+  events are stored as `orderbook_deltas` rows of `event_type = 'trade'` with `fee_rate_bps`.
+  `make recorder-coverage` prints token-days, gaps > 5 min, raw bytes/day and the active strata.
+  Compression after 1 day (migration 0010). `--top N` remains as the v2 source.
+- **Schema (migration 0010).** `trade_prints.proxy_wallet`, `bt_trades.basket_id` /
+  `basket_role`, `orderbook_deltas.event_type` / `fee_rate_bps`, `recorder_watchlist`;
+  `ENGINE_VERSION` 0.7.0. The reference re-run and its reading are in docs/DATA_NOTES.md ("M8").

@@ -47,7 +47,11 @@ const BADGE_TONES: Record<string, string> = {
   NO_SIGNALS: "border-dashed border-line text-ink-faint",
   FILLED: "border-line text-ink-muted",
   UNEXECUTABLE: "border-dashed border-warn text-warn",
+  UNEXECUTABLE_LIMIT_EXPIRED: "border-dashed border-warn text-warn",
+  UNEXECUTABLE_BASKET_LEG: "border-dashed border-warn text-warn",
   REJECTED_MIN_SIZE: "border-dashed border-loss text-loss",
+  LEG: "border-line text-ink-faint",
+  SUMMARY: "border-accent text-accent",
 };
 
 export function Badge({ children, kind }: { children: ReactNode; kind?: string }) {

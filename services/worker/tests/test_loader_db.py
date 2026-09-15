@@ -58,6 +58,10 @@ def test_restricted_fields_only_in_settlement_and_only_traded_side_loaded(db: st
     )  # the print before `start` counts toward as-of volume
     assert ds.fee_schedules and ds.dataset_version_id == "00000000-0000-0000-0000-0000000000aa"
     assert loaded.content_hash == "hash-1"
+    # v3 E4: wallets become ids in order of first appearance; NULL stays -1
+    assert ds.wallets == ("0xwallet-a",)
+    assert tok.print_wallet is not None and tok.print_wallet.tolist() == [0, 0]
+    assert ds.markets["M1"].neg_risk is False and ds.markets["M1"].is_catch_all is None
 
 
 def test_either_side_loads_both_tokens(db: str) -> None:

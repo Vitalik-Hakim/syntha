@@ -106,7 +106,7 @@ def write_rows(conn: psycopg.Connection[Any], buf: Buffers) -> tuple[int, int]:
         if deltas:
             with cur.copy(
                 "COPY orderbook_deltas (ts, clob_token_id, condition_id, side, price, size, "
-                "best_bid, best_ask, received_at) FROM STDIN"
+                "best_bid, best_ask, received_at, event_type, fee_rate_bps) FROM STDIN"
             ) as cp:
                 for d in deltas:
                     cp.write_row(
@@ -120,6 +120,8 @@ def write_rows(conn: psycopg.Connection[Any], buf: Buffers) -> tuple[int, int]:
                             d.best_bid,
                             d.best_ask,
                             d.received_at,
+                            d.event_type,
+                            d.fee_rate_bps,
                         )
                     )
     return len(snaps), len(deltas)

@@ -16,11 +16,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).parent))
+from register import family_counts, family_of_key
 
 RESEARCH_DIR = Path(os.environ.get("SYNTHA_DATA_DIR", "data")) / "research"
 
@@ -127,6 +131,44 @@ def best_of_n(
     }
 
 
+def best_of_n_by_family(
+    rows_by_key: dict[str, dict[str, dict[str, Any]]], draws: int, rng: np.random.Generator
+) -> dict[str, dict[str, Any]]:
+    """PRD v3 §3.6/§6.3: N per family comes from the register. Registered configurations that
+    have no sweep result are treated as exchangeable with the family's run ones (their null draw
+    is sampled from the family's pooled null draws), so an unrun registration still counts."""
+    registered = family_counts()
+    families: dict[str, list[list[np.ndarray]]] = defaultdict(list)
+    for key in sorted(rows_by_key):
+        variants = [
+            np.array(r["permutation_variants"])
+            for r in rows_by_key[key].values()
+            if "roi" in r and r.get("permutation_variants")
+        ]
+        if variants:
+            families[family_of_key(key)].append(variants)
+    out: dict[str, dict[str, Any]] = {}
+    for family, configs in families.items():
+        n = max(registered.get(family, 0), len(configs))
+        best = np.empty(draws)
+        for i in range(draws):
+            pooled_nulls = [
+                float(np.mean([v[rng.integers(0, v.size)] for v in variants]))
+                for variants in configs
+            ]
+            extra = rng.choice(pooled_nulls, size=n - len(configs)) if n > len(configs) else []
+            best[i] = max([*pooled_nulls, *extra])
+        out[family] = {
+            "n_registered": registered.get(family, 0),
+            "n_run": len(configs),
+            "n": n,
+            "expected_best_roi": float(best.mean()),
+            "best_p95": float(np.percentile(best, 95)),
+            "distribution": best,
+        }
+    return out
+
+
 def selected(p: dict[str, Any]) -> bool:
     if "error" in p or p["pooled_ci90"] is None:
         return False
@@ -183,6 +225,24 @@ def main() -> None:
             f"(95th percentile {null['best_p95']:+.2%}). The actual best, {best_roi:+.2%}, is beaten by chance "
             f"{share:.0%} of the time."
         )
+        lines.append("")
+    by_family = best_of_n_by_family(rows, args.draws, rng)
+    if by_family:
+        lines.append("**Best-of-N by family (N from docs/research/REGISTER.md):**")
+        lines.append("")
+        lines.append(
+            "| Family | N registered | N run | Best actual | Expected best by chance | 95th pct | Beaten by chance |"
+        )
+        lines.append("|---|---|---|---|---|---|---|")
+        for family, null_f in sorted(by_family.items()):
+            members = [k for k in ranked if family_of_key(k) == family]
+            best_key = members[0] if members else None
+            actual = table[best_key]["pooled_roi"] if best_key else float("nan")
+            share_f = float(np.mean(null_f["distribution"] >= actual)) if best_key else float("nan")
+            lines.append(
+                f"| {family} | {null_f['n_registered']} | {null_f['n_run']} | {_pct(actual)} | "
+                f"{_pct(null_f['expected_best_roi'])} | {_pct(null_f['best_p95'])} | {share_f:.0%} |"
+            )
         lines.append("")
     header = (
         "| # | Configuration | Pooled ROI | 90% CI | Months + | Trades | Fill | Perm (median) | Random | B&H | Cost ratio | Max DD | "

@@ -60,7 +60,8 @@ RUN_COLUMNS = """id, status, strategy_name, collection, created_at, started_at, 
 TRADE_COLUMNS = """t.seq, t.fill_status, t.condition_id, t.clob_token_id, t.side, t.signal_ts, t.entry_ts,
     t.entry_ref_price, t.entry_price, t.shares, t.notional, t.entry_fee, t.exit_ts, t.exit_price, t.exit_fee,
     t.exit_reason, t.gross_pnl, t.fees_total, t.slippage_cost, t.net_pnl, t.return_pct, t.holding_seconds,
-    (t.entry_rule_trace->>'attempts')::int, t.entry_rule_trace->'execution'->>'reason', m.question"""
+    (t.entry_rule_trace->>'attempts')::int, t.entry_rule_trace->'execution'->>'reason', m.question,
+    t.basket_id, t.basket_role"""
 
 
 def _num(value: Any) -> str | None:
@@ -383,6 +384,8 @@ def _trade_row(r: tuple[Any, ...]) -> dict[str, Any]:
         "attempts": r[22],
         "refusal_reason": r[23],
         "question": r[24],
+        "basket_id": r[25],
+        "basket_role": r[26],
     }
 
 
@@ -441,7 +444,7 @@ def _trade_detail(conn: psycopg.Connection[Any], run_id: str, seq: int) -> Trade
     ).fetchone()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"trade {seq} not found in {run_id}")
-    return TradeDetail(**_trade_row(row), entry_rule_trace=row[25], exit_rule_trace=row[26])
+    return TradeDetail(**_trade_row(row), entry_rule_trace=row[27], exit_rule_trace=row[28])
 
 
 def _neighbours(
@@ -459,6 +462,11 @@ def _neighbours(
 def trade_replay(run_id: str, seq: int, conn: ConnDep) -> Replay:
     """Price, prints and decision geometry around one trade (PRD §13.3)."""
     detail = _trade_detail(conn, run_id, seq)
+    if detail.basket_role == "SUMMARY":
+        # v3 E3: a summary row has no token of its own; replay its first leg
+        legs = (detail.entry_rule_trace or {}).get("legs") or []
+        if legs:
+            detail = _trade_detail(conn, run_id, int(legs[0]))
     g = R.trade_geometry(detail)
     start, end = g.span()
     context = conn.execute(
@@ -709,7 +717,7 @@ def export_json(run_id: str, conn: ConnDep, settings: SettingsDep) -> dict[str, 
     return {
         "run": detail.model_dump(mode="json"),
         "trades": [
-            TradeDetail(**_trade_row(r), entry_rule_trace=r[25], exit_rule_trace=r[26]).model_dump(
+            TradeDetail(**_trade_row(r), entry_rule_trace=r[27], exit_rule_trace=r[28]).model_dump(
                 mode="json"
             )
             for r in trade_rows

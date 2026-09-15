@@ -163,5 +163,9 @@ bench-engine: ## Engine benchmark at the PRD target (1,000 markets × 90 days of
 	uv run python tools/bench_engine.py 1000 90
 
 .PHONY: recorder
-recorder: ## Record the live order book (top 10 markets by 24h volume) into Postgres and data/raw
+recorder: ## Record the live order book for the designed watchlist (PRD v3 E7) into Postgres and data/raw
 	uv run python -m syntha_recorder
+
+.PHONY: recorder-coverage
+recorder-coverage: ## Recorder coverage report: token-days, gaps > 5 min, bytes/day, watchlist strata
+	uv run python -m syntha_recorder --coverage

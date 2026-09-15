@@ -82,3 +82,68 @@ def test_presets_match_prd_table() -> None:
         c.liquidity_participation,
         c.partial_fill_policy,
     ) == (2, True, 0.05, "REJECT")
+
+
+# ------------------------------------------------------------------ PRD v3 §3 (M8)
+
+
+def _v3(entry: dict, **overrides: object) -> dict:
+    base: dict = {
+        "name": "v3",
+        "universe": {"side": "BUY_YES"},
+        "entry": entry,
+        "sizing": {"mode": "FIXED_CASH", "value": 10},
+        "exit": {"any": []},
+        "constraints": {},
+    }
+    base.update(overrides)
+    return base
+
+
+def test_limit_orders_are_the_default() -> None:
+    dsl = StrategyDSL.model_validate(
+        _v3({"all": [{"feature": "price", "op": "lte", "value": 0.5}]})
+    )
+    assert (
+        dsl.order.type == "LIMIT" and dsl.order.limit_offset_ticks == 1 and dsl.order.ttl_bars == 5
+    )
+
+
+def test_basket_kind_must_match_the_universe_side_and_has_no_exit_rules() -> None:
+    basket = {"basket": {"kind": "NEGRISK_NO_SET"}}
+    with pytest.raises(ValidationError, match="side"):
+        StrategyDSL.model_validate(_v3(basket))  # NO set on a BUY_YES universe
+    ok = StrategyDSL.model_validate(_v3(basket, universe={"side": "BUY_NO"}))
+    assert ok.entry.basket is not None and ok.entry.basket.min_markets == 3
+    with pytest.raises(ValidationError, match="exit"):
+        StrategyDSL.model_validate(
+            _v3(
+                basket,
+                universe={"side": "BUY_NO"},
+                exit={"any": [{"type": "MAX_HOLD_MINUTES", "value": 5}]},
+            )
+        )
+
+
+def test_wallet_sell_exit_needs_a_print_trigger_entry() -> None:
+    wallet_exit = {"any": [{"type": "WALLET_SELL"}]}
+    with pytest.raises(ValidationError, match="print_trigger"):
+        StrategyDSL.model_validate(
+            _v3({"all": [{"feature": "price", "op": "lte", "value": 0.5}]}, exit=wallet_exit)
+        )
+    ok = StrategyDSL.model_validate(
+        _v3({"print_trigger": {"side": "BUY", "min_notional": 500}}, exit=wallet_exit)
+    )
+    assert ok.entry.print_trigger is not None and ok.exit.any[0].type == "WALLET_SELL"
+
+
+def test_entry_is_exactly_one_kind() -> None:
+    with pytest.raises(ValidationError):
+        StrategyDSL.model_validate(
+            _v3(
+                {
+                    "all": [{"feature": "price", "op": "lte", "value": 0.5}],
+                    "print_trigger": {"side": "BUY", "min_notional": 1},
+                }
+            )
+        )

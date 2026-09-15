@@ -4,6 +4,8 @@ Wire format verified live on 2026-09-14 (docs/DATA_NOTES.md): the initial snapsh
 JSON array, later frames as single objects; `book` levels arrive bids-ascending and
 asks-descending and are re-sorted here to the PRD's convention (bids descending, asks
 ascending). Prices and sizes are decimal strings and stay strings until Postgres parses them.
+`last_trade_price` events (v3 E7) become delta rows of type `trade` carrying `fee_rate_bps`,
+the only per-fill fee record Polymarket publishes.
 """
 
 from __future__ import annotations
@@ -37,6 +39,8 @@ class DeltaRow:
     best_bid: str | None
     best_ask: str | None
     received_at: datetime
+    event_type: str = "price_change"  # price_change | trade (v3 E7)
+    fee_rate_bps: str | None = None  # trade rows only
 
 
 def _ms(value: Any) -> datetime | None:
@@ -124,5 +128,27 @@ def rows(
                 )
             )
         return [], deltas
+
+    if kind == "last_trade_price":
+        token = str(event.get("asset_id"))
+        side = str(event.get("side", "")).upper()
+        price, size = _decimal_str(event.get("price")), _decimal_str(event.get("size"))
+        if token not in watched or side not in ("BUY", "SELL") or price is None or size is None:
+            return [], []
+        return [], [
+            DeltaRow(
+                ts=ts,
+                clob_token_id=token,
+                condition_id=market,
+                side=side,
+                price=price,
+                size=size,
+                best_bid=None,
+                best_ask=None,
+                received_at=received_at,
+                event_type="trade",
+                fee_rate_bps=_decimal_str(event.get("fee_rate_bps")),
+            )
+        ]
 
     return [], []

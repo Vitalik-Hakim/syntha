@@ -634,6 +634,36 @@ export interface components {
             starting_capital?: string;
             strategy: components["schemas"]["StrategyDSL"];
         };
+        /**
+         * BasketEntry
+         * @description v3 E3: buy every open sibling of an event as one all-or-nothing basket when the set
+         *     identity leaves an edge. YES set: Σ P(yes) ≤ 1 − c; NO set: Σ P(no) ≤ (N − 1) − c, with
+         *     c = Σ leg fees + one tick per leg + `min_edge`.
+         */
+        BasketEntry: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "NEGRISK_YES_SET" | "NEGRISK_NO_SET";
+            /**
+             * Min Edge
+             * @description Extra margin per unit beyond fees and ticks
+             * @default 0
+             */
+            min_edge?: number;
+            /**
+             * Min Markets
+             * @default 3
+             */
+            min_markets?: number;
+            /**
+             * Require Catch All
+             * @description Only sets with a listed catch-all market are exhaustive (v3 §4.2)
+             * @default true
+             */
+            require_catch_all?: boolean;
+        };
         /** BuiltinStrategy */
         BuiltinStrategy: {
             /** Description */
@@ -835,6 +865,8 @@ export interface components {
             all?: components["schemas"]["Condition"][] | null;
             /** Any */
             any?: components["schemas"]["Condition"][] | null;
+            basket?: components["schemas"]["BasketEntry"] | null;
+            print_trigger?: components["schemas"]["PrintTrigger"] | null;
             random?: components["schemas"]["RandomEntry"] | null;
         };
         /** EquityLine */
@@ -899,6 +931,11 @@ export interface components {
              * @default 0.1
              */
             liquidity_participation?: number | null;
+            /**
+             * @description v3 E2: which taker prints are liquidity. SAME_SIDE: a buy fills against prints other takers bought (ask liquidity), a sell against prints they sold. BOTH: every print in the bar (v2 behaviour, optimistic).
+             * @default SAME_SIDE
+             */
+            liquidity_side?: components["schemas"]["LiquiditySide"];
             /** @default TRADE_PRINT */
             model?: components["schemas"]["ExecutionModel"];
             /** @default ALLOW */
@@ -924,7 +961,7 @@ export interface components {
          */
         Exit: {
             /** Any */
-            any?: (components["schemas"]["TakeProfit"] | components["schemas"]["StopLoss"] | components["schemas"]["PriceAbove"] | components["schemas"]["PriceBelow"] | components["schemas"]["MaxHold"] | components["schemas"]["RuleExit"])[];
+            any?: (components["schemas"]["TakeProfit"] | components["schemas"]["StopLoss"] | components["schemas"]["PriceAbove"] | components["schemas"]["PriceBelow"] | components["schemas"]["MaxHold"] | components["schemas"]["RuleExit"] | components["schemas"]["WalletSellExit"])[];
         };
         /** FeatureInfo */
         FeatureInfo: {
@@ -1019,6 +1056,12 @@ export interface components {
              */
             random_baselines?: number;
         };
+        /**
+         * LiquiditySide
+         * @description v3 E2 — which taker prints count as liquidity for a fill.
+         * @enum {string}
+         */
+        LiquiditySide: "SAME_SIDE" | "BOTH";
         /** MaxHold */
         MaxHold: {
             /**
@@ -1126,6 +1169,31 @@ export interface components {
             ts: string;
         };
         /**
+         * Order
+         * @description v3 E1: how signals become orders. LIMIT is the default for all research: a buy limit is
+         *     the signal price plus `limit_offset_ticks`, a sell limit is the signal price minus it, and
+         *     the order rests for `ttl_bars` bars before it expires. MARKET keeps v2 behaviour and is
+         *     flagged as having no price protection.
+         */
+        Order: {
+            /**
+             * Limit Offset Ticks
+             * @default 1
+             */
+            limit_offset_ticks?: number;
+            /**
+             * Ttl Bars
+             * @default 5
+             */
+            ttl_bars?: number;
+            /**
+             * Type
+             * @default LIMIT
+             * @enum {string}
+             */
+            type?: "LIMIT" | "MARKET";
+        };
+        /**
          * PartialFillPolicy
          * @description §11.3.
          * @enum {string}
@@ -1164,6 +1232,27 @@ export interface components {
             type: "PRICE_BELOW";
             /** Value */
             value: number;
+        };
+        /**
+         * PrintTrigger
+         * @description v3 E4 / S3: enter when a taker print of at least `min_notional` by one of `wallets` (any
+         *     wallet when null) lands in the bar. The signal remembers the wallet, so a WALLET_SELL exit
+         *     can watch for its sale.
+         */
+        PrintTrigger: {
+            /**
+             * Min Notional
+             * @default 0
+             */
+            min_notional?: number;
+            /**
+             * Side
+             * @default BUY
+             * @enum {string}
+             */
+            side?: "BUY" | "SELL";
+            /** Wallets */
+            wallets?: string[] | null;
         };
         /**
          * RandomEntry
@@ -1619,6 +1708,7 @@ export interface components {
             exit?: components["schemas"]["Exit"];
             /** Name */
             name: string;
+            order?: components["schemas"]["Order"];
             sizing: components["schemas"]["Sizing"];
             universe?: components["schemas"]["Universe"];
         };
@@ -1707,6 +1797,10 @@ export interface components {
         TradeDetail: {
             /** Attempts */
             attempts: number | null;
+            /** Basket Id */
+            basket_id?: string | null;
+            /** Basket Role */
+            basket_role?: string | null;
             /** Clob Token Id */
             clob_token_id: string;
             /** Condition Id */
@@ -1789,6 +1883,10 @@ export interface components {
         TradeRow: {
             /** Attempts */
             attempts: number | null;
+            /** Basket Id */
+            basket_id?: string | null;
+            /** Basket Role */
+            basket_role?: string | null;
             /** Clob Token Id */
             clob_token_id: string;
             /** Condition Id */
@@ -1898,6 +1996,23 @@ export interface components {
             lookback_bars?: number | null;
             /** Ok */
             ok: boolean;
+        };
+        /**
+         * WalletSellExit
+         * @description v3 E4: exit when the wallet whose print triggered the entry sells the same token.
+         */
+        WalletSellExit: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "WALLET_SELL";
+            /**
+             * Wallet Ref
+             * @default signal
+             * @constant
+             */
+            wallet_ref?: "signal";
         };
     };
     responses: never;

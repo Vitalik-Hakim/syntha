@@ -52,6 +52,12 @@ class MarketTerms:
     fee_type: str | None
     fee_rate: Decimal | None
     fee_exponent: int | None
+    # v3 §4.2: a catch-all sibling ("Other", "None of the above") makes an event's set exhaustive.
+    # None = not known (no event data); the EventView reports it as not present.
+    is_catch_all: bool | None = None
+    # v3 E3: Polymarket's neg-risk flag. Only a neg-risk event's markets are one exhaustive,
+    # mutually exclusive set; a basket over anything else is a directional bet, not a set.
+    neg_risk: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +73,9 @@ class TokenData:
     print_size: FloatArray
     print_side: npt.NDArray[np.int8]  # +1 BUY, -1 SELL (taker side)
     prior_notional: float = 0.0  # traded notional before the first print supplied (as-of volume)
+    # v3 E4: index into Dataset.wallets per print, -1 when unknown. Wallets are pseudonymous
+    # public addresses; they never leave the engine's outputs except as ids in traces.
+    print_wallet: npt.NDArray[np.int32] | None = None
 
     def __post_init__(self) -> None:
         n, m = len(self.bar_ts), len(self.print_ts)
@@ -74,6 +83,8 @@ class TokenData:
             raise ValueError(f"{self.clob_token_id}: bar arrays differ in length")
         if not (len(self.print_price) == len(self.print_size) == len(self.print_side) == m):
             raise ValueError(f"{self.clob_token_id}: print arrays differ in length")
+        if self.print_wallet is not None and len(self.print_wallet) != m:
+            raise ValueError(f"{self.clob_token_id}: print_wallet differs in length")
         if n > 1 and not bool(np.all(np.diff(self.bar_ts) > 0)):
             raise ValueError(f"{self.clob_token_id}: bar timestamps must be strictly ascending")
         if m > 1 and not bool(np.all(np.diff(self.print_ts) >= 0)):
@@ -123,6 +134,8 @@ class Dataset:
     dataset_version_id: str | None = None
     # How the markets were selected (collection manifest definition), used for bias warnings.
     selection: dict[str, Any] | None = None
+    # v3 E4: wallet addresses by id, for TokenData.print_wallet.
+    wallets: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for tok in self.tokens.values():

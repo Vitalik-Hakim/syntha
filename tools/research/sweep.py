@@ -24,6 +24,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 from candidates import grid, grid2
+from register import require_registered
 
 RESEARCH_DIR = Path(os.environ.get("SYNTHA_DATA_DIR", "data")) / "research"
 
@@ -37,6 +38,7 @@ def _one(prep_cache: dict[Any, Any], request: Any, url: str) -> dict[str, Any]:
     """One configuration on one (already loaded) collection: the backtest plus its honesty tests."""
     from syntha_contracts.builtins import builtin_strategy
     from syntha_engine.honesty import compute_honesty
+    from syntha_engine.metrics.core import executed_trades
     from syntha_engine.runner import BacktestResult, prepare, simulate
     from syntha_worker.loader import load_dataset
 
@@ -55,7 +57,7 @@ def _one(prep_cache: dict[Any, Any], request: Any, url: str) -> dict[str, Any]:
     )
     t2 = time.perf_counter()
     m, dq, s = result.metrics, result.data_quality, h["summary"]
-    executed = [t for t in result.trades if t["fill_status"] in ("FILLED", "PARTIAL")]
+    executed = executed_trades(result.trades)
     return {
         "roi": m["roi"],
         "net_profit": m["net_profit"],
@@ -72,7 +74,17 @@ def _one(prep_cache: dict[Any, Any], request: Any, url: str) -> dict[str, Any]:
         "execution_state": dq["execution_state"],
         "markets_usable": dq["markets_with_usable_data"],
         "trade_pnl": [float(t["net_pnl"]) for t in executed],
+        "trade_notional": [float(t["notional"]) for t in executed],
         "trade_sides": [t["side"] for t in executed],
+        # v3 E5
+        "return_per_dollar": m["return_per_dollar"]["pooled"],
+        "cluster_ci90": s["cluster_ci90"],
+        "cluster_key": s["cluster_key"],
+        "return_per_dollar_ci90": s["return_per_dollar_ci90"],
+        "mde_80": s["mde_80"],
+        "roi_current_fees": s["roi_current_fees"],
+        "roi_historical_fees": s["roi_historical_fees"],
+        "capacity": m["capacity"],
         "roi_ci90": h["bootstrap"]["roi_ci90"],
         "permutation_percentile": s["permutation_percentile"],
         "permutation_variants": h["permutation"].get("roi_variants", []),
@@ -160,6 +172,8 @@ def main() -> None:
     if args.keys:
         wanted = set(args.keys)
         configs = [c for c in configs if c["key"] in wanted]
+    # PRD v3 §3.6: nothing runs without a register row
+    require_registered([(c["key"], c["dsl"]) for c in configs])
     base = {
         "starting_capital": args.capital,
         "seed": args.seed,

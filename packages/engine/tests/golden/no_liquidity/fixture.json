@@ -3,7 +3,8 @@
   "asserts": "Zero prints in bar -> UNEXECUTABLE",
   "derivation": [
     "TRADE_PRINT execution, 10% participation, no fallback. YES token at 0.30 (m0-m1), no trade prints at all.",
-    "Signal m0, execute m1: the m1 bar has no prints -> UNEXECUTABLE (NO_PRINTS), zero size and P&L, recorded as a trade row. No trade price existed, so entry prices are null (never 0)."
+    "Signal m0, execute m1: the m1 bar has no prints -> UNEXECUTABLE (NO_PRINTS), zero size and P&L, recorded as a trade row. No trade price existed, so entry prices are null (never 0).",
+    "Order type MARKET: a v3 LIMIT order would rest for its TTL instead of failing on the first bar (see the limit_expired fixture)."
   ],
   "start": "2026-01-01T00:00:00Z",
   "end_minute": null,
@@ -67,6 +68,9 @@
         "max_positions_per_event": 1,
         "cooldown_minutes_per_market": 0,
         "allow_reentry_same_market": false
+      },
+      "order": {
+        "type": "MARKET"
       }
     },
     "starting_capital": "100",

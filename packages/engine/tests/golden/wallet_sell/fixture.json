@@ -1,0 +1,119 @@
+{
+  "name": "wallet_sell",
+  "asserts": "v3 E4: a print_trigger entry follows a wallet's large taker buy, and WALLET_SELL exits when that wallet prints a taker sell on the same token",
+  "derivation": [
+    "print_trigger BUY >= $50 notional (any wallet); exit WALLET_SELL on the signal wallet. MARKET orders, TRADE_PRINT, unlimited participation, zero slippage, no fees. YES bar price 0.40 at m0-m2 and 0.42 at m3-m6.",
+    "m0: wallet W1 buys 200 @ 0.40 ($80 >= $50) -> the trigger is known at m0's close; signal m0, execute m1.",
+    "m1: BUY 100 @ 0.40 by W2 ($40, no trigger) is the liquidity: fill 0.40, FIXED_CASH 20 -> 50 shares FILLED, cost 20, cash 80.",
+    "m3: W1 prints SELL 100 @ 0.42 -> WALLET_SELL signal at m3, execute m4 against m4's taker-SELL prints (100 @ 0.42 by W3): exit 0.42 x 50 = 21.00 -> cash 101.00.",
+    "gross = 50 x (0.42 - 0.40) = 1.00; no slippage, no fees; net +1.00; exit_reason WALLET_SELL."
+  ],
+  "start": "2026-01-01T00:00:00Z",
+  "end_minute": null,
+  "markets": [
+    {
+      "condition_id": "m1",
+      "event_id": "ev-m1",
+      "category": "test",
+      "tick_size": "0.01",
+      "min_order_size": "5",
+      "created_minute": 0,
+      "open_minute": 0,
+      "end_minute": null,
+      "fees_enabled": false,
+      "fee_type": null,
+      "fee_rate": null,
+      "fee_exponent": null,
+      "resolution": "UNRESOLVED",
+      "resolved_minute": null,
+      "closed_minute": null,
+      "tokens": [
+        {
+          "clob_token_id": "yes1",
+          "outcome_index": 0,
+          "outcome_name": "Yes"
+        },
+        {
+          "clob_token_id": "no1",
+          "outcome_index": 1,
+          "outcome_name": "No"
+        }
+      ]
+    }
+  ],
+  "fee_schedules": [],
+  "request": {
+    "strategy": {
+      "name": "golden",
+      "universe": {
+        "side": "BUY_YES"
+      },
+      "entry": {
+        "print_trigger": {
+          "side": "BUY",
+          "min_notional": 50
+        }
+      },
+      "sizing": {
+        "mode": "FIXED_CASH",
+        "value": 20
+      },
+      "exit": {
+        "any": [
+          {
+            "type": "WALLET_SELL",
+            "wallet_ref": "signal"
+          }
+        ]
+      },
+      "constraints": {
+        "max_open_positions": 5,
+        "max_total_exposure_pct": 0.25,
+        "max_positions_per_event": 1,
+        "cooldown_minutes_per_market": 0,
+        "allow_reentry_same_market": false
+      },
+      "order": {
+        "type": "MARKET"
+      }
+    },
+    "starting_capital": "100",
+    "seed": 7,
+    "bar_interval_minutes": 1,
+    "decision_lag_bars": 1,
+    "execution": {
+      "model": "TRADE_PRINT",
+      "slippage_ticks": 0,
+      "liquidity_participation": null,
+      "partial_fill_policy": "ALLOW"
+    },
+    "fees": {
+      "mode": "FIXED",
+      "fixed_rate": "0"
+    },
+    "max_stale_minutes": 60
+  },
+  "expected": {
+    "cash_end": "101.00",
+    "equity_end": "101.00",
+    "trades": [
+      {
+        "seq": 1,
+        "fill_status": "FILLED",
+        "entry_minute": 1,
+        "entry_price": "0.40",
+        "shares": "50",
+        "exit_minute": 4,
+        "exit_price": "0.42",
+        "exit_reason": "WALLET_SELL",
+        "gross_pnl": "1.00",
+        "slippage_cost": "0",
+        "net_pnl": "1.00"
+      }
+    ],
+    "data_quality": {
+      "signals_generated": 1,
+      "signals_filled": 1
+    }
+  }
+}

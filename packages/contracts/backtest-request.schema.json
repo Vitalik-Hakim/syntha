@@ -1,5 +1,43 @@
 {
   "$defs": {
+    "BasketEntry": {
+      "additionalProperties": false,
+      "description": "v3 E3: buy every open sibling of an event as one all-or-nothing basket when the set\nidentity leaves an edge. YES set: Σ P(yes) ≤ 1 − c; NO set: Σ P(no) ≤ (N − 1) − c, with\nc = Σ leg fees + one tick per leg + `min_edge`.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "NEGRISK_YES_SET",
+            "NEGRISK_NO_SET"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "min_edge": {
+          "default": 0.0,
+          "description": "Extra margin per unit beyond fees and ticks",
+          "minimum": 0,
+          "title": "Min Edge",
+          "type": "number"
+        },
+        "min_markets": {
+          "default": 3,
+          "minimum": 2,
+          "title": "Min Markets",
+          "type": "integer"
+        },
+        "require_catch_all": {
+          "default": true,
+          "description": "Only sets with a listed catch-all market are exhaustive (v3 §4.2)",
+          "title": "Require Catch All",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "BasketEntry",
+      "type": "object"
+    },
     "Condition": {
       "additionalProperties": false,
       "properties": {
@@ -185,6 +223,28 @@
           "default": null,
           "title": "Any"
         },
+        "basket": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BasketEntry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "print_trigger": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrintTrigger"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "random": {
           "anyOf": [
             {
@@ -228,6 +288,11 @@
           "default": 0.1,
           "description": "Share of the bar's printed size we may take. None = unlimited.",
           "title": "Liquidity Participation"
+        },
+        "liquidity_side": {
+          "$ref": "#/$defs/LiquiditySide",
+          "default": "SAME_SIDE",
+          "description": "v3 E2: which taker prints are liquidity. SAME_SIDE: a buy fills against prints other takers bought (ask liquidity), a sell against prints they sold. BOTH: every print in the bar (v2 behaviour, optimistic)."
         },
         "model": {
           "$ref": "#/$defs/ExecutionModel",
@@ -290,7 +355,8 @@
                 "PRICE_BELOW": "#/$defs/PriceBelow",
                 "RULE": "#/$defs/RuleExit",
                 "STOP_LOSS_PCT": "#/$defs/StopLoss",
-                "TAKE_PROFIT_PCT": "#/$defs/TakeProfit"
+                "TAKE_PROFIT_PCT": "#/$defs/TakeProfit",
+                "WALLET_SELL": "#/$defs/WalletSellExit"
               },
               "propertyName": "type"
             },
@@ -312,6 +378,9 @@
               },
               {
                 "$ref": "#/$defs/RuleExit"
+              },
+              {
+                "$ref": "#/$defs/WalletSellExit"
               }
             ]
           },
@@ -402,6 +471,15 @@
       "title": "HonestyConfig",
       "type": "object"
     },
+    "LiquiditySide": {
+      "description": "v3 E2 — which taker prints count as liquidity for a fill.",
+      "enum": [
+        "SAME_SIDE",
+        "BOTH"
+      ],
+      "title": "LiquiditySide",
+      "type": "string"
+    },
     "MaxHold": {
       "additionalProperties": false,
       "properties": {
@@ -421,6 +499,35 @@
         "value"
       ],
       "title": "MaxHold",
+      "type": "object"
+    },
+    "Order": {
+      "additionalProperties": false,
+      "description": "v3 E1: how signals become orders. LIMIT is the default for all research: a buy limit is\nthe signal price plus `limit_offset_ticks`, a sell limit is the signal price minus it, and\nthe order rests for `ttl_bars` bars before it expires. MARKET keeps v2 behaviour and is\nflagged as having no price protection.",
+      "properties": {
+        "limit_offset_ticks": {
+          "default": 1,
+          "minimum": 0,
+          "title": "Limit Offset Ticks",
+          "type": "integer"
+        },
+        "ttl_bars": {
+          "default": 5,
+          "minimum": 1,
+          "title": "Ttl Bars",
+          "type": "integer"
+        },
+        "type": {
+          "default": "LIMIT",
+          "enum": [
+            "LIMIT",
+            "MARKET"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "Order",
       "type": "object"
     },
     "PartialFillPolicy": {
@@ -474,6 +581,44 @@
         "value"
       ],
       "title": "PriceBelow",
+      "type": "object"
+    },
+    "PrintTrigger": {
+      "additionalProperties": false,
+      "description": "v3 E4 / S3: enter when a taker print of at least `min_notional` by one of `wallets` (any\nwallet when null) lands in the bar. The signal remembers the wallet, so a WALLET_SELL exit\ncan watch for its sale.",
+      "properties": {
+        "min_notional": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Min Notional",
+          "type": "number"
+        },
+        "side": {
+          "default": "BUY",
+          "enum": [
+            "BUY",
+            "SELL"
+          ],
+          "title": "Side",
+          "type": "string"
+        },
+        "wallets": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Wallets"
+        }
+      },
+      "title": "PrintTrigger",
       "type": "object"
     },
     "RandomEntry": {
@@ -639,6 +784,9 @@
           "title": "Name",
           "type": "string"
         },
+        "order": {
+          "$ref": "#/$defs/Order"
+        },
         "sizing": {
           "$ref": "#/$defs/Sizing"
         },
@@ -727,6 +875,28 @@
         }
       },
       "title": "Universe",
+      "type": "object"
+    },
+    "WalletSellExit": {
+      "additionalProperties": false,
+      "description": "v3 E4: exit when the wallet whose print triggered the entry sells the same token.",
+      "properties": {
+        "type": {
+          "const": "WALLET_SELL",
+          "title": "Type",
+          "type": "string"
+        },
+        "wallet_ref": {
+          "const": "signal",
+          "default": "signal",
+          "title": "Wallet Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "WalletSellExit",
       "type": "object"
     }
   },

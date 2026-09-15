@@ -43,6 +43,33 @@ PRICE_CHANGE = {
 }
 
 
+# Live capture 2026-09-14 (v3 E7): the only per-fill fee record Polymarket publishes.
+LAST_TRADE = {
+    "market": "0xm",
+    "asset_id": "111",
+    "price": "0.002",
+    "size": "5",
+    "fee_rate_bps": "0",
+    "side": "BUY",
+    "timestamp": "1789424816252",
+    "event_type": "last_trade_price",
+    "transaction_hash": "0x7ec2",
+}
+
+
+def test_last_trade_price_becomes_a_trade_row_with_its_fee_rate() -> None:
+    snaps, deltas = rows(LAST_TRADE, NOW, WATCHED)
+    assert snaps == []
+    (d,) = deltas
+    assert d.event_type == "trade" and d.fee_rate_bps == "0"
+    assert (d.side, d.price, d.size, d.best_bid) == ("BUY", "0.002", "5", None)
+    assert d.ts == datetime.fromtimestamp(1789424816.252, UTC)
+    assert rows({**LAST_TRADE, "asset_id": "999"}, NOW, WATCHED) == ([], [])
+    # ordinary level deltas keep the default type
+    _, price_deltas = rows(PRICE_CHANGE, NOW, WATCHED)
+    assert price_deltas[0].event_type == "price_change" and price_deltas[0].fee_rate_bps is None
+
+
 def test_initial_snapshot_arrives_as_array_later_frames_as_objects() -> None:
     assert len(events(json.dumps([BOOK, BOOK]))) == 2
     assert len(events(json.dumps(PRICE_CHANGE))) == 1

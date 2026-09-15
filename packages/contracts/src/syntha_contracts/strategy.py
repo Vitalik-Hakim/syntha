@@ -65,17 +65,62 @@ class RandomEntry(_Strict):
     probability_per_bar: float = Field(gt=0, le=1)
 
 
+class PrintTrigger(_Strict):
+    """v3 E4 / S3: enter when a taker print of at least `min_notional` by one of `wallets` (any
+    wallet when null) lands in the bar. The signal remembers the wallet, so a WALLET_SELL exit
+    can watch for its sale."""
+
+    side: Literal["BUY", "SELL"] = "BUY"
+    min_notional: float = Field(default=0, ge=0)
+    wallets: list[str] | None = None
+
+
+class BasketEntry(_Strict):
+    """v3 E3: buy every open sibling of an event as one all-or-nothing basket when the set
+    identity leaves an edge. YES set: Σ P(yes) ≤ 1 − c; NO set: Σ P(no) ≤ (N − 1) − c, with
+    c = Σ leg fees + one tick per leg + `min_edge`."""
+
+    kind: Literal["NEGRISK_YES_SET", "NEGRISK_NO_SET"]
+    min_edge: float = Field(
+        default=0.0, ge=0, description="Extra margin per unit beyond fees and ticks"
+    )
+    require_catch_all: bool = Field(
+        default=True,
+        description="Only sets with a listed catch-all market are exhaustive (v3 §4.2)",
+    )
+    min_markets: int = Field(default=3, ge=2)
+
+
 class Entry(_Strict):
     all: list[Condition] | None = None
     any: list[Condition] | None = None
     random: RandomEntry | None = None
+    print_trigger: PrintTrigger | None = None
+    basket: BasketEntry | None = None
 
     @model_validator(mode="after")
     def _exactly_one(self) -> Entry:
-        given = [x for x in (self.all, self.any, self.random) if x is not None]
+        given = [
+            x
+            for x in (self.all, self.any, self.random, self.print_trigger, self.basket)
+            if x is not None
+        ]
         if len(given) != 1:
-            raise ValueError("entry needs exactly one of `all`, `any` or `random`")
+            raise ValueError(
+                "entry needs exactly one of `all`, `any`, `random`, `print_trigger` or `basket`"
+            )
         return self
+
+
+class Order(_Strict):
+    """v3 E1: how signals become orders. LIMIT is the default for all research: a buy limit is
+    the signal price plus `limit_offset_ticks`, a sell limit is the signal price minus it, and
+    the order rests for `ttl_bars` bars before it expires. MARKET keeps v2 behaviour and is
+    flagged as having no price protection."""
+
+    type: Literal["LIMIT", "MARKET"] = "LIMIT"
+    limit_offset_ticks: int = Field(default=1, ge=0)
+    ttl_bars: int = Field(default=5, ge=1)
 
 
 class Sizing(_Strict):
@@ -122,8 +167,15 @@ class RuleExit(_Strict):
     condition: Condition
 
 
+class WalletSellExit(_Strict):
+    """v3 E4: exit when the wallet whose print triggered the entry sells the same token."""
+
+    type: Literal["WALLET_SELL"]
+    wallet_ref: Literal["signal"] = "signal"
+
+
 ExitRule = Annotated[
-    TakeProfit | StopLoss | PriceAbove | PriceBelow | MaxHold | RuleExit,
+    TakeProfit | StopLoss | PriceAbove | PriceBelow | MaxHold | RuleExit | WalletSellExit,
     Field(discriminator="type"),
 ]
 
@@ -152,6 +204,22 @@ class StrategyDSL(_Strict):
     sizing: Sizing
     exit: Exit = Field(default_factory=Exit)
     constraints: Constraints = Field(default_factory=Constraints)
+    order: Order = Field(default_factory=Order)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> StrategyDSL:
+        if self.entry.basket is not None:
+            wanted = Side.BUY_YES if self.entry.basket.kind == "NEGRISK_YES_SET" else Side.BUY_NO
+            if self.universe.side not in (wanted, Side.EITHER):
+                raise ValueError(
+                    f"a {self.entry.basket.kind} basket buys {wanted.value} tokens; set "
+                    f"universe.side to {wanted.value} or EITHER"
+                )
+            if self.exit.any:
+                raise ValueError("basket strategies hold to settlement; exit rules are not allowed")
+        if any(r.type == "WALLET_SELL" for r in self.exit.any) and self.entry.print_trigger is None:
+            raise ValueError("a WALLET_SELL exit needs a print_trigger entry (it names the wallet)")
+        return self
 
     def canonical_json(self) -> str:
         return json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
