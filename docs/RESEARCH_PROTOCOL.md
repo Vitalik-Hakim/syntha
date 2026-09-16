@@ -263,3 +263,19 @@ S1 (`research/studies/s1_calibration/registration.yaml`) and S2
 (`research/studies/s2_deadline_decay/registration.yaml`) were committed on 2026-09-15 before
 the first census month was sampled; their register rows (study, cells, rules) are in
 `docs/research/REGISTER.md`. The 2025-07 census is the first data of Stage 4.
+
+### Stage 4 outcome for S1 and S2 (2026-09-16)
+
+The fourteen census months (D: 2025-07…2025-12 and 2026-02…2026-05; C1: 2026-06…2026-08; C2:
+2026-01) were sampled, fetched, built bit-identically and verified (docs/DATA_NOTES.md, "Census
+months"). The pre-registered S1 discovery command ran on D three times, each time with a
+classification fix recorded before any confirmation run: **no candidate survived** once the
+5/15/60-minute "Up or Down" series were classified `ultra_short` and excluded, and the one
+pass-1 candidate was shown to be a window-VWAP artefact (research/studies/s1_calibration/README.md).
+The negative space (660 cells, each with its n, return, 90% cluster CI and MDE) is the S1
+result; no C1/C2 run was made because there was nothing to confirm. S2's test 1 was
+untestable (no BY arm ≥ 100 observations) and its registered rule, run through the engine as
+registered on D, then C1, then C2, is **rejected** under §6.2 (40 trades in 14 months, MDE
+25–90 points, capacity below $50/month; research/studies/s2_deadline_decay/README.md). Register
+rows R-0045…R-0768 carry the outcomes. 2026-09 and 2026-10 join C1 once their markets resolve;
+that is a new registration for whatever is proposed next, not a re-run.

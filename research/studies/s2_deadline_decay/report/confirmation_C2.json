@@ -1,0 +1,86 @@
+{
+ "generated_at": "2026-09-16T11:15:44+00:00",
+ "results": {
+  "S2 deadline decay: NO at -72h on BY markets": {
+   "file": "research/studies/s2_deadline_decay/rule_deadline_decay_no_72h.json",
+   "set": "C2",
+   "months": [
+    "2026-01"
+   ],
+   "per_month": {
+    "2026-01": {
+     "deciding": {
+      "run_id": "BT-20260916-00111",
+      "status": "DONE",
+      "roi": -0.02781947,
+      "n_trades": 4,
+      "return_per_dollar": -0.41361417210096957,
+      "capacity_1000": 66.90093546494758,
+      "signals": 18,
+      "filled": 4
+     },
+     "conservative": {
+      "run_id": "BT-20260916-00112",
+      "status": "DONE",
+      "roi": -0.00172187,
+      "n_trades": 3,
+      "return_per_dollar": -0.0287017224167208,
+      "capacity_1000": 58.43871408202352,
+      "signals": 18,
+      "filled": 3
+     }
+    }
+   },
+   "pooled_deciding": {
+    "n_trades": 4,
+    "net": -27.81947,
+    "notional": 67.25947,
+    "return_per_dollar": -0.41361417210096957,
+    "ci90": [
+     -1.0,
+     0.41620158987608
+    ],
+    "key": "event",
+    "se": 0.3676767763870024,
+    "mde_80": 0.911838405439766,
+    "by_key": {
+     "event": [
+      -1.0,
+      0.41620158987608
+     ],
+     "day": [
+      -1.0,
+      -0.16550205820961678
+     ]
+    }
+   },
+   "pooled_conservative": {
+    "n_trades": 3,
+    "net": -1.72187,
+    "notional": 59.99187,
+    "return_per_dollar": -0.0287017224167208,
+    "ci90": [
+     -1.0,
+     0.45704541595808545
+    ],
+    "key": "day",
+    "se": 0.5303804981977506,
+    "mde_80": 1.3153436355304213,
+    "by_key": {
+     "event": [
+      -0.5654684964659938,
+      0.5081326976738215
+     ],
+     "day": [
+      -1.0,
+      0.45704541595808545
+     ]
+    }
+   },
+   "months_positive": 0,
+   "months_with_trades": 1,
+   "capacity_1000_mean": 66.90093546494758,
+   "passes_set_rule": false
+  }
+ }
+}

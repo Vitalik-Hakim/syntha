@@ -118,3 +118,31 @@ def test_unconfirmed_by_chain_is_unresolved() -> None:
     r = resolve_market(_gamma('["1", "0"]'), {"status": "resolved", "price": None})
     assert r.resolution == "UNRESOLVED"
     assert r.anomaly and "unrecognised chain payout" in r.anomaly
+
+
+def test_question_window_marks_short_crypto_markets_ultra_short() -> None:
+    from datetime import UTC, datetime
+
+    from syntha_ingestion.parse import duration_class, question_window_minutes
+
+    assert question_window_minutes("Bitcoin Up or Down - March 28, 4:15AM-4:30AM ET") == 15
+    assert question_window_minutes("Ethereum Up or Down - March 28, 2:25AM-2:30AM ET") == 5
+    assert question_window_minutes("Solana Up or Down - July 4, 11PM-12AM ET") == 60
+    assert question_window_minutes("Will BTC move 2% in the next 5 minutes?") == 5
+    assert question_window_minutes("Will Bitcoin be above $120k on July 31?") is None
+    assert (
+        question_window_minutes("Bitcoin Up or Down - August 5, 12PM ET") == 60
+    )  # the hourly series
+    assert (
+        question_window_minutes("Will Ethereum be between $3000 and $3100 on July 14 at 5PM ET?")
+        is None
+    )
+    open_ts = datetime(2026, 3, 25, tzinfo=UTC)
+    end_ts = datetime(2026, 3, 28, 8, 30, tzinfo=UTC)
+    # listed three days ahead: end − open says multi_day, the question says 15 minutes
+    assert duration_class(open_ts, end_ts) == "multi_day"
+    assert (
+        duration_class(open_ts, end_ts, "Bitcoin Up or Down - March 28, 4:15AM-4:30AM ET")
+        == "ultra_short"
+    )
+    assert duration_class(open_ts, end_ts, "Will Bitcoin be above $120k on July 31?") == "multi_day"

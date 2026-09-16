@@ -1947,6 +1947,11 @@ export interface components {
             /** Categories */
             categories?: string[] | null;
             /**
+             * Deadline Types
+             * @description v3 S2: keep only markets whose question has this deadline type (BY: 'by/before <date>', ON: 'on/at <date>' or a fixture, NONE: neither). Parsed from the question text, known at listing.
+             */
+            deadline_types?: ("BY" | "ON" | "NONE")[] | null;
+            /**
              * Min Time To Resolution Minutes
              * @description Minutes until the *scheduled* end date.
              */

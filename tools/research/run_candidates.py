@@ -36,6 +36,14 @@ def main() -> None:
     ap.add_argument("--all-presets", action="store_true")
     ap.add_argument("--capital", default="1000")
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument(
+        "--bar-interval",
+        type=int,
+        default=1,
+        choices=[1, 5, 15, 60],
+        help="60 for census collections (hourly samples; PRD v3 M9)",
+    )
+    ap.add_argument("--note", default=None, help="strategy version note")
     args = ap.parse_args()
     url = os.environ.get("SYNTHA_DATABASE_URL", "postgresql://syntha:syntha@localhost:5432/syntha")
     url = url.replace("postgresql+psycopg://", "postgresql://")
@@ -51,13 +59,14 @@ def main() -> None:
                 "dataset": {"collection": args.collection},
                 "starting_capital": args.capital,
                 "seed": args.seed,
+                "bar_interval_minutes": args.bar_interval,
             }
         )
         presets = PRESETS if args.all_presets else (args.preset,)
         group = uuid.uuid4() if args.all_presets else None
         for preset in presets:
             with psycopg.connect(url) as conn:
-                run_id = create_run(conn, base.with_preset(preset), group)
+                run_id = create_run(conn, base.with_preset(preset), group, note=args.note)
                 conn.commit()
             request = base.with_preset(preset)
             u = request.strategy.universe

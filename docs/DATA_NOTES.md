@@ -681,6 +681,114 @@ concurrency 16. Manifest: `data/raw/_census/census-2025-07.json`.
   S2's BY arm will be small in 2025 months; the registration's n ≥ 500 per arm is a real bar.
 - **Raw layer:** ≈ 270 MB gzipped for the month (trades 188 MB, prices 59 MB, events 22 MB).
 
+### Census months August 2025 → May 2026, C1 and January 2026 (driver, 2026-09-15)
+
+Run by `tools/research/census_months.sh` in the order 2025-08 … 2025-12, 2026-02 … 2026-05
+(discovery), 2026-06 … 2026-08 (C1), 2026-01 (C2); 2026-09 and 2026-10 wait until their
+markets resolve. Per-month outcomes are appended below as the driver reports them.
+
+| Month | Finished (UTC) | Markets | Observations | With mid | With fill_10m | Fill rate | Hash | Rebuild |
+|---|---|---|---|---|---|---|---|---|
+| 2025-08 | 2026-09-15 08:11 | 7,245 | 89,044 | 94.2% | 6,001 | 6.7% | `f5dff80fd8ba` | bit-identical, verified |
+| 2025-09 | 2026-09-15 08:47 | 10,968 | 127,490 | 89.8% | 5,512 | 4.3% | `413141c4d4bb` | bit-identical, verified |
+| 2025-10 | 2026-09-15 09:38 | 12,878 | 141,896 | 91.4% | 9,749 | 6.9% | `c72def590e05` | bit-identical, verified |
+| 2025-11 | 2026-09-15 10:35 | 13,384 | 148,256 | 91.1% | 12,773 | 8.6% | `cc011ce861da` | bit-identical, verified |
+| 2025-12 | 2026-09-15 13:13 | 19,126 | 234,086 | 70.5% | 9,194 | 3.9% | `79cc09bea79a` | bit-identical, verified |
+| 2026-02 | 2026-09-15 14:30 | 20,002 | 243,384 | 86.2% | 13,294 | 5.5% | `019115bf2884` | bit-identical, verified |
+| 2026-03 | 2026-09-15 15:35 | 21,413 | 256,390 | 86.7% | 12,603 | 4.9% | `e9201830245e` | bit-identical, verified |
+| 2026-04 | 2026-09-15 16:32 | 21,395 | 257,486 | 81.2% | 10,225 | 4.0% | `6595ae742019` | bit-identical, verified |
+| 2026-05 | 2026-09-15 17:30 | 22,916 | 272,708 | 82.7% | 9,131 | 3.3% | `b22eb02cc9c3` | bit-identical, verified |
+| 2026-06 (C1) | 2026-09-15 19:38 | 23,367 | 287,884 | 84.5% | 9,679 | 3.4% | `0a39b344775b` | bit-identical, verified (fetch attempt 1 left failures; attempt 2 completed) |
+| 2026-07 (C1) | 2026-09-15 20:51 | 22,532 | 278,012 | 86.6% | 5,059 | 1.8% | `950512ff156e` | bit-identical, verified |
+| 2026-08 (C1) | 2026-09-15 23:08 | 23,369 | 285,310 | 86.0% | 4,075 | 1.4% | `7ccaf03669ec` | bit-identical, verified |
+| 2026-01 (C2) | 2026-09-16 00:37 | 18,060 | 230,878 | 82.7% | 7,056 | 3.1% | `ec9c93944039` | bit-identical, verified |
+
+All fourteen months (D: ten, C1: three, C2: 2026-01) are built, bit-identical on a second
+build and verified. The fill rate falls through 2026 (6.7% in 2025-08, 1.4% in 2026-08): the
+trade walk stops at end − 8 days or ten pages, and in the busy 2026 months ten pages of a
+market's newest prints do not always reach the −7d/−3d offsets, so those offsets have no fill
+(recorded as "no fill", never invented). The census sees the truncation; `fill_10m` at −24h
+and later is unaffected.
+
+### Full normalized rebuild with all fourteen census months (2026-09-16)
+
+Version `8cac86a6…`, content hash `49627933a689…`, built by `make rebuild-normalized`
+(`syntha-ingest normalize`) on the third attempt of the day: 3,669 recorder markets + 238,704
+census markets, 484,746 tokens, 293,240,050 hourly/minute bars, 76,570,279 prints; the 14
+`census-<month>` collections exist. Timings on the 16 GB laptop: parse and spool 24 min,
+COPY of bars and prints with secondary indexes dropped and recreated 40 min, content
+hash plus the data-quality report (now single-threaded, in a savepoint) 55 min — 120 min
+in all. The quality report completed this time. Disk: the load consumed about 120 GB inside
+the Docker VM; the two failed attempts before it are described in docs/DECISIONS.md ("Disk
+incident") — the second filled the host disk and left 126 GiB of orphaned PostgreSQL files,
+removed by hand after the user's approval, and the old layer was truncated before this attempt.
+Runs created between 05:45 and 11:02 UTC on 2026-09-16 (none survive; the chain's junk runs
+BT-20260916-00080…00084 were deleted) would have seen a partial layer.
+
+### M9 discovery, first pass — a candidate that was an artefact (2026-09-15)
+
+The pre-registered discovery command on the ten D months (1,851,402 observations, 660 primary
+cells, cluster bootstrap by event and by day, BH at 10% FDR with N = 660) selected one cell:
+**crypto, fill price [0.35, 0.50), offset −15m** — n = 15,921, fill rate 66%, E[r] = +0.283
+(90% CI +0.267 to +0.298, day clustering), positive in all ten months, capacity $20k/month at
+$1,000. Two cells passed BH but not the sign rule (crypto [0.35,0.50) −1h, crypto [0.50,0.65)
+−15m). The same cell's **mid calibration was −0.7%**: at the price level those tokens were
+fairly priced. Diagnostics on the discovery set, before anything else was run:
+
+- The markets are 5- and 15-minute "Bitcoin/Ethereum/XRP Up or Down — March 28, 4:15AM–4:30AM
+  ET" windows. They are *listed* one to three days ahead, so the §4.1 duration class (scheduled
+  end − open) called them `multi_day` or `intraday` and they entered the primary cells — the
+  "latency game" the registration excludes as `ultra_short`. They also consumed the
+  `crypto/multi_day` cap (2,000) in every 2026 month.
+- Among observations whose **mid** is in [0.35, 0.50) at −15m: those with a qualifying fill in
+  the next 10 minutes won 38.1% (n = 11,570), those without won 66.5% (n = 5,840). Among
+  observations whose **fill** is in the bucket (mean mid 0.501, mean fill 0.442, fill − mid =
+  −5.8¢): 58.7% won. In 3,378 markets *both* tokens "filled" in the bucket — at 0.44 each, an
+  impossible pair that mechanically returns +13%. The window VWAP of prints at ≤ mid + 1 tick
+  is an average over a market's *dips* during the window; in a 15-minute crypto market the
+  window is the whole life of the outcome. At −1h the same mechanics inflate crypto returns by
+  about nine points (fill − mid = −5.4¢).
+- So E2's "same-side prints as evidence of an ask" is sound for a resting market but selects
+  dips wherever the price moves faster than the window. The registered estimand (`fill_10m`)
+  keeps its definition; the build now also stores `fill_first_10m` (the earliest qualifying
+  print, the first evidence that an ask ≤ limit existed) and the report shows E[r] on both.
+  Where they disagree, the window VWAP is the optimistic one.
+
+Consequences (reality wins; the registration's hypotheses are unchanged): `duration_class`
+also reads the question's own window (`4:15AM-4:30AM`, "next 5 minutes"), applied at build time
+for every month; the census tables were rebuilt (migration 0012 adds `fill_first_10m`) and the
+discovery command re-run. The first-pass report is superseded; its numbers stay here as the
+record of what the naive definitions produce.
+
+Second pass (2026-09-15 19:36): with 22,174 ultra-short markets excluded, three crypto cells
+still cleared the rule ([0.35,0.50) at −15m: +40%; [0.35,0.50) at −1h: +4.2% but −0.4% at the
+first print and mid calibration −6%; [0.50,0.65) at −1h: +20%). Their markets were the 2025
+*hourly* "Bitcoin Up or Down - August 5, 12PM ET" series, which states one clock time rather
+than a range and had slipped past the window parser; a single clock time in an "Up or Down"
+question now counts as a 60-minute window (`_SINGLE_CLOCK`). Third pass below.
+
+**Third pass (2026-09-15 20:13, final for D):** with both series excluded — 29,319 ultra-short
+markets, 279,100 observations, 59,840 of the 84,000 executable fills — **no primary cell passes
+BH at 10% FDR**; candidates: none. Only 3 of 660 cells reach n ≥ 500 and 9 reach n ≥ 300, all
+sports; every one has a 90% cluster interval spanning zero (E[r] from −21% to +2.7%; fill rates
+2–10%; MDE@80% 8–22¢ per dollar). Fill rates on the non-ultra-short frame: −7d 2.9%, −3d 1.2%,
+−24h 2.2%, −6h 2.8%, −1h 7.5%, −15m 14.1%. S2 test 1 has no contrast cell with 100 BY-arm
+observations: underpowered on 2025–26 data. Report: `research/studies/s1_calibration/report/`.
+
+### S2 deadline decay — rule rejected through the engine (2026-09-16)
+
+`tools/research/confirm.py run` executed the registered S2 rule (R-0768) on the census
+collections at 60-minute bars in the registered order D → C1 → C2, deciding preset REALISTIC
+execution + CURRENT fees, CONSERVATIVE as the robustness arm; 28 runs BT-20260916-00085…00112.
+D: 27 trades, +0.039 per dollar, 90% CI −0.135 to +0.189 (event clusters), MDE 0.246, positive
+in 6 of 10 months, capacity $34/month — fail. C1: 9 trades, +0.296, CI −0.195 to +0.727, fail.
+C2 (2026-01): 4 trades, −0.414, fail. Conservative C1 ∪ C2 negative. Verdict **rejected**
+(`research/studies/s2_deadline_decay/report/verdicts.md`). The rule fires a few times a month
+because BY-type markets with a NO price in 0.50–0.90 at 60–72 hours out and a flat week are
+rare; the MDE (25 points on D) is far above the 5-point target, so this is a negative result
+with an MDE, not evidence about the hypothesis. Test 1 (BY-vs-ON calibration contrasts) had
+no BY arm with 100 observations and stays untested.
+
 ### The three M9 decisions (product owner, 2026-09-15)
 
 - **Capacity denominator = the collection's coverage window** (`Dataset.coverage`, from the

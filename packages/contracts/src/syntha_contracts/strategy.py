@@ -57,6 +57,12 @@ class Universe(_Strict):
     min_time_to_resolution_minutes: int | None = Field(
         default=None, ge=0, description="Minutes until the *scheduled* end date."
     )
+    deadline_types: list[Literal["BY", "ON", "NONE"]] | None = Field(
+        default=None,
+        description="v3 S2: keep only markets whose question has this deadline type (BY: "
+        "'by/before <date>', ON: 'on/at <date>' or a fixture, NONE: neither). Parsed from the "
+        "question text, known at listing.",
+    )
 
 
 class RandomEntry(_Strict):

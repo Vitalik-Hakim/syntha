@@ -547,6 +547,27 @@
           "default": null,
           "title": "Categories"
         },
+        "deadline_types": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "BY",
+                  "ON",
+                  "NONE"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "v3 S2: keep only markets whose question has this deadline type (BY: 'by/before <date>', ON: 'on/at <date>' or a fixture, NONE: neither). Parsed from the question text, known at listing.",
+          "title": "Deadline Types"
+        },
         "min_time_to_resolution_minutes": {
           "anyOf": [
             {

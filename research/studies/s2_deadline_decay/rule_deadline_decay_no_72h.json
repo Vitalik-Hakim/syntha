@@ -1,0 +1,18 @@
+{
+  "name": "S2 deadline decay: NO at -72h on BY markets",
+  "description": "PRD v3 S2 test 2, the registered dynamic rule (research/studies/s2_deadline_decay/registration.yaml, registered_rules[0]) in DSL form. Universe: NO tokens of markets whose question has a BY deadline. Entry: NO price in [0.50, 0.90] while 60–72 hours remain to the scheduled end and the NO price has not risen more than 10% over the prior 7 days (the engine expresses the 'YES has not decayed' condition on the traded token). Hold to settlement. LIMIT +1 tick, TTL 5 bars, 2% of starting capital, one position per event. Runs on census collections at 60-minute bars.",
+  "universe": {"side": "BUY_NO", "deadline_types": ["BY"]},
+  "entry": {
+    "all": [
+      {"feature": "price", "params": {}, "op": "gte", "value": 0.5},
+      {"feature": "price", "params": {}, "op": "lte", "value": 0.9},
+      {"feature": "time_to_resolution_minutes", "params": {}, "op": "lte", "value": 4320},
+      {"feature": "time_to_resolution_minutes", "params": {}, "op": "gte", "value": 3600},
+      {"feature": "price_change_pct", "params": {"lookback_minutes": 10080}, "op": "lte", "value": 0.10}
+    ]
+  },
+  "sizing": {"mode": "PCT_OF_INITIAL", "value": 0.02, "min_order_policy": "ROUND_UP", "round_up_max_multiple": 2.0},
+  "exit": {"any": []},
+  "constraints": {"max_open_positions": 40, "max_total_exposure_pct": 0.8, "max_positions_per_event": 1, "cooldown_minutes_per_market": 0, "allow_reentry_same_market": false},
+  "order": {"type": "LIMIT", "limit_offset_ticks": 1, "ttl_bars": 5}
+}

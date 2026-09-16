@@ -58,6 +58,8 @@ class MarketTerms:
     # v3 E3: Polymarket's neg-risk flag. Only a neg-risk event's markets are one exhaustive,
     # mutually exclusive set; a basket over anything else is a directional bet, not a set.
     neg_risk: bool | None = None
+    # v3 D4/S2: BY | ON | NONE from the question text; None = not parsed (treated as NONE)
+    deadline_type: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

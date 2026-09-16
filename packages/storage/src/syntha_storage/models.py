@@ -476,6 +476,8 @@ class CensusObservation(Base):
     fee_entry: Mapped[Decimal | None] = mapped_column(MONEY)
     fee_entry_current: Mapped[Decimal | None] = mapped_column(MONEY)
     payout: Mapped[Decimal | None] = mapped_column(PRICE, info=_RESTRICTED)
+    # M9: the first qualifying print's price; the window VWAP averages in later dips
+    fill_first_10m: Mapped[Decimal | None] = mapped_column(PRICE)
 
 
 class BtLedger(Base):

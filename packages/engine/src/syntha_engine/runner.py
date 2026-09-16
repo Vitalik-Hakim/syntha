@@ -121,6 +121,7 @@ class Signal:
     best_seen: float | None = None
     wallet: int | None = None  # v3 E4: the wallet whose print triggered the entry
     basket: Any = None  # v3 E3: BasketDecision for kind BASKET
+    first_due_k: int | None = None  # the bar the order first went live (due_k moves while resting)
 
 
 # Refusals an order can wait out within its TTL (v3 E1); everything else fails at once.
@@ -347,6 +348,9 @@ def prepare(
     if universe.categories is not None:
         cats = {c.lower() for c in universe.categories}
         wanted = [c for c in wanted if (dataset.markets[c].category or "").lower() in cats]
+    if universe.deadline_types is not None:
+        kinds = set(universe.deadline_types)
+        wanted = [c for c in wanted if (dataset.markets[c].deadline_type or "NONE") in kinds]
     tokens: list[str] = []
     for cid in wanted:
         found = _tokens_for_side(dataset, cid, universe.side)
@@ -1166,6 +1170,7 @@ def simulate(
                 )
                 if result_b == RESTING:
                     n_baskets -= 1
+                    sig.first_due_k = sig.first_due_k if sig.first_due_k is not None else k
                     sig.due_k = k + 1
                     pending.append(sig)
             elif sig.kind == "EXIT":
@@ -1182,6 +1187,7 @@ def simulate(
                     can_rest,
                 )
                 if outcome == RESTING:
+                    sig.first_due_k = sig.first_due_k if sig.first_due_k is not None else k
                     sig.due_k = k + 1
                     pending.append(sig)
             else:
@@ -1205,6 +1211,7 @@ def simulate(
                 )
                 if failure == RESTING:
                     ep.attempt_pending = True
+                    sig.first_due_k = sig.first_due_k if sig.first_due_k is not None else k
                     sig.due_k = k + 1
                     pending.append(sig)
                 elif failure is None:
@@ -1417,7 +1424,10 @@ def _execute_entry(
                     "last_refusal": quote.reason,
                     "limit_price": float(sig.limit),
                     "best_price_seen": sig.best_seen,
-                    "bars_waited": (k - sig.due_k) + 1,
+                    "bars_waited": (
+                        k - (sig.first_due_k if sig.first_due_k is not None else sig.due_k)
+                    )
+                    + 1,
                 },
                 None,
                 quote.ref_price,

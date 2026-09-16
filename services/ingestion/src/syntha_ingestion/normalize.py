@@ -8,21 +8,31 @@ Determinism rules, so two rebuilds from the same raw data are bit-identical:
   from what we meant to write.
 
 `dataset_versions` rows record each build and are not part of the hashed content.
+
+Census months (PRD v3 D1, `raw/_census/*.json`) join the layer as collections named
+`census-<month>`: their markets come from the saved listing pages, their bars are the census's
+hourly samples (`source = prices_history_60`, bar timestamps on the hour) and their prints the
+census walks (the last ~8 days of each market). They are survivorship-free and let candidate
+strategies run through the engine at `bar_interval_minutes = 60` without a second fetch.
 """
 
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import logging
+import traceback
 import uuid
+from array import array
 from bisect import bisect_left
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from importlib import resources
+from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -139,6 +149,64 @@ def fee_schedule_rows() -> list[tuple[Any, ...]]:
     return rows
 
 
+CENSUS_DIR = "_census"
+
+
+def census_collection_rows(
+    raw: RawStore,
+) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]], dict[str, str], list[tuple[str, str]]]:
+    """collections, collection_markets, market_id → condition_id and the listing windows for
+    every census manifest (v3 D1)."""
+    collections, members, market_ids, windows = [], [], {}, []
+    base = raw.root / CENSUS_DIR
+    for path in sorted(base.glob("*.json")) if base.exists() else []:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        cid = uuid.uuid5(COLLECTION_NAMESPACE, manifest["name"])
+        definition = {
+            "kind": "census",
+            "month": manifest.get("month"),
+            "definition": manifest.get("definition"),
+            "frame": manifest.get("frame"),
+        }
+        collections.append(
+            (
+                str(cid),
+                manifest["name"],
+                json.dumps(definition, sort_keys=True),
+                _ts(parse_ts(manifest["created_at"])),
+            )
+        )
+        d = manifest.get("definition") or {}
+        windows.append((str(d.get("end_date_min")), str(d.get("end_date_max"))))
+        for m in manifest["markets"]:
+            members.append((str(cid), m["condition_id"]))
+            market_ids[str(m["id"])] = m["condition_id"]
+    collections.sort(key=lambda r: r[0])
+    return collections, sorted(set(members)), market_ids, windows
+
+
+def listing_market_objects(
+    raw: RawStore, windows: list[tuple[str, str]], market_ids: set[str]
+) -> dict[str, tuple[RawRecord, dict[str, Any]]]:
+    """Newest listed Gamma object per wanted market id from the closed keyset listings of
+    `windows` (the census keeps no per-id refetch: listing rows already carry `events`). Only
+    `market_ids` are kept: a month's listing holds up to 700k markets, the sample 20k."""
+    wanted = set(windows)
+    out: dict[str, tuple[RawRecord, dict[str, Any]]] = {}
+    for rec in raw.records(pm.GAMMA_MARKETS_KEYSET):  # oldest first, newest wins
+        u = rec.unit
+        if (
+            rec.status == 200
+            and u.get("closed") is True
+            and (str(u.get("end_date_min")), str(u.get("end_date_max"))) in wanted
+        ):
+            for market in rec.json().get("markets") or []:
+                mid = str(market["id"])
+                if mid in market_ids:
+                    out[mid] = (rec, market)
+    return out
+
+
 def collection_rows(
     raw: RawStore,
 ) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]], dict[str, str]]:
@@ -171,8 +239,14 @@ class MarketBuild:
     tokens: dict[str, str]  # clob_token_id → condition_id
 
 
-def market_rows(raw: RawStore, wanted: dict[str, str], build: BuildLog) -> MarketBuild:
-    market_objects = pm.latest_market_objects(raw)
+def market_rows(
+    raw: RawStore,
+    wanted: dict[str, str],
+    build: BuildLog,
+    objects: dict[str, tuple[RawRecord, dict[str, Any]]] | None = None,
+) -> MarketBuild:
+    """`objects` overrides where market objects come from (census months: listing pages)."""
+    market_objects = pm.latest_market_objects(raw) if objects is None else objects
     event_recs = _latest(raw.records(pm.GAMMA_EVENT), "id")
 
     v2_rows: dict[str, dict[str, Any]] = {}
@@ -285,61 +359,81 @@ def market_rows(raw: RawStore, wanted: dict[str, str], build: BuildLog) -> Marke
 
 
 def trade_lines(
-    raw: RawStore, tokens: dict[str, str], build: BuildLog
-) -> tuple[list[str], dict[str, list[int]]]:
-    """COPY lines for trade_prints and, per token, sorted print epoch seconds."""
+    raw: RawStore, tokens: dict[str, str], build: BuildLog, spool: Path
+) -> dict[str, array[int]]:
+    """Write the COPY lines for trade_prints to `spool` (market by market, each market's prints
+    de-duplicated and sorted by (ts, key)) and return, per token, its print epoch seconds in
+    ascending order. Streaming keeps memory to one market's pages at a time: twelve census
+    months hold ~60M prints, which as one dict of lines needed more RAM than the machine has."""
     conditions = set(tokens.values())
-    accepted = 0
-    rows: dict[str, tuple[int, str, str]] = {}  # print_key → (ts, token, line)
-    for rec in raw.records(pm.DATA_V2_TRADES):
-        if rec.status != 200 or rec.unit.get("condition") not in conditions:
-            continue
-        for t in rec.json().get("data") or []:
-            build.rows_in["trade_prints"] += 1
-            tok = str(t.get("token_id"))
-            price, size = t.get("price"), t.get("size")
-            side = str(t.get("side", "")).upper()
-            if tokens.get(tok) != t.get("condition_id"):
-                build.rows_rejected["trade_prints:unknown_token"] += 1
-                continue
-            if (
-                price is None
-                or not 0 < float(price) <= 1
-                or size is None
-                or float(size) <= 0
-                or side not in ("BUY", "SELL")
-            ):
-                build.rows_rejected["trade_prints:invalid_values"] += 1
-                continue
-            accepted += 1
-            key = print_key(t)
-            ts = int(t["timestamp"])
-            wallet = str(t.get("proxy_wallet") or "").strip() or "\\N"  # v3 E4; \N = NULL
-            line = (
-                f"{_epoch_ts(ts)}\t{key}\t{t['condition_id']}\t{tok}\t"
-                f"{float(price):.6f}\t{float(size):.6f}\t{side}\t{wallet}\n"
-            )
-            rows[key] = (ts, tok, line)
+    by_condition: dict[str, list[RawRecord]] = defaultdict(list)
+    for rec in raw.records(pm.DATA_V2_TRADES):  # oldest first (dedup: last fetch wins)
+        cid = rec.unit.get("condition")
+        if rec.status == 200 and cid in conditions:
+            by_condition[str(cid)].append(rec)
+    accepted = written = 0
+    by_token: dict[str, array[int]] = defaultdict(lambda: array("q"))
+    with spool.open("w", encoding="utf-8") as out:
+        for cid in sorted(by_condition):
+            rows: dict[str, tuple[int, str, str]] = {}  # print_key → (ts, token, line)
+            for rec in by_condition[cid]:
+                for t in rec.json().get("data") or []:
+                    build.rows_in["trade_prints"] += 1
+                    tok = str(t.get("token_id"))
+                    price, size = t.get("price"), t.get("size")
+                    side = str(t.get("side", "")).upper()
+                    if tokens.get(tok) != t.get("condition_id"):
+                        build.rows_rejected["trade_prints:unknown_token"] += 1
+                        continue
+                    if (
+                        price is None
+                        or not 0 < float(price) <= 1
+                        or size is None
+                        or float(size) <= 0
+                        or side not in ("BUY", "SELL")
+                    ):
+                        build.rows_rejected["trade_prints:invalid_values"] += 1
+                        continue
+                    accepted += 1
+                    key = print_key(t)
+                    ts = int(t["timestamp"])
+                    wallet = str(t.get("proxy_wallet") or "").strip() or "\\N"  # v3 E4
+                    line = (
+                        f"{_epoch_ts(ts)}\t{key}\t{t['condition_id']}\t{tok}\t"
+                        f"{float(price):.6f}\t{float(size):.6f}\t{side}\t{wallet}\n"
+                    )
+                    rows[key] = (ts, tok, line)
+            for _, (ts, tok, line) in sorted(rows.items(), key=lambda kv: (kv[1][0], kv[0])):
+                out.write(line)
+                by_token[tok].append(ts)
+                written += 1
+    build.rows_written["trade_prints"] = written
+    build.rows_rejected["trade_prints:duplicate"] = accepted - written
+    return by_token
 
-    ordered = sorted(rows.items(), key=lambda kv: (kv[1][0], kv[0]))
-    by_token: dict[str, list[int]] = defaultdict(list)
-    for _, (ts, tok, _) in ordered:
-        by_token[tok].append(ts)
-    build.rows_written["trade_prints"] = len(ordered)
-    build.rows_rejected["trade_prints:duplicate"] = accepted - len(ordered)
-    return [line for _, (_, _, line) in ordered], by_token
+
+def _spooled(path: Path) -> Iterator[str]:
+    with path.open("r", encoding="utf-8") as f:
+        yield from f
 
 
 def bar_lines(
-    raw: RawStore, tokens: dict[str, str], prints: dict[str, list[int]], build: BuildLog
+    raw: RawStore,
+    tokens: dict[str, str],
+    prints: Mapping[str, Sequence[int]],
+    build: BuildLog,
+    fidelity: int = 1,
 ) -> Iterator[str]:
-    """COPY lines for price_bars, one token at a time (keeps memory flat)."""
+    """COPY lines for price_bars, one token at a time (keeps memory flat). `fidelity` selects
+    the sample grain (1 for collections, 60 for census months); a bar's timestamp is floored to
+    that grain and its staleness is measured at the bar's end."""
     by_token: dict[str, list[RawRecord]] = defaultdict(list)
     for rec in raw.records(pm.CLOB_PRICES_HISTORY):
         tok = str(rec.unit.get("token"))
-        # census fetches (v3 D1) share the endpoint at fidelity 60; bars are 1-minute only
-        if rec.status == 200 and tok in tokens and int(rec.unit.get("fidelity", 1)) == 1:
+        if rec.status == 200 and tok in tokens and int(rec.unit.get("fidelity", 1)) == fidelity:
             by_token[tok].append(rec)
+    grain = fidelity * 60
+    source = "prices_history" if fidelity == 1 else f"prices_history_{fidelity}"
 
     for tok in sorted(by_token):
         # minute → (record order, observed t, price). A newer fetch always wins; within one
@@ -352,7 +446,7 @@ def bar_lines(
                 if p is None or not 0 <= float(p) <= 1:
                     build.rows_rejected["price_bars:invalid_price"] += 1
                     continue
-                minute = t // 60 * 60
+                minute = t // grain * grain
                 prev = samples.get(minute)
                 if prev is not None:
                     # Overlapping windows or two samples in one minute: one bar survives.
@@ -361,14 +455,17 @@ def bar_lines(
                     samples[minute] = (order, t, float(p))
         token_prints = prints.get(tok, [])
         for minute in sorted(samples):
-            j = bisect_left(token_prints, minute + 60)  # prints before the end of this bar
+            j = bisect_left(token_prints, minute + grain)  # prints before the end of this bar
             last = token_prints[j - 1] if j else None
             in_bar = last is not None and last >= minute
-            staleness = r"\N" if last is None else str((minute - last // 60 * 60) // 60)
+            # minutes from the print's minute to the bar's last minute (0 inside a 1-minute bar)
+            staleness = (
+                r"\N" if last is None else str((minute + grain - 60 - last // 60 * 60) // 60)
+            )
             build.rows_written["price_bars"] += 1
             yield (
                 f"{tok}\t{_epoch_ts(minute)}\t{samples[minute][2]:.6f}\t"
-                f"{'f' if in_bar else 't'}\t{staleness}\tprices_history\n"
+                f"{'f' if in_bar else 't'}\t{staleness}\t{source}\n"
             )
 
 
@@ -428,12 +525,38 @@ def rebuild(settings: IngestSettings) -> RebuildResult:
 
     fees = fee_schedule_rows()
     collections, members, wanted = collection_rows(raw)
-    if not wanted:
+    c_collections, c_members, c_wanted, windows = census_collection_rows(raw)
+    if not wanted and not c_wanted:
         raise RuntimeError(f"no collection manifests under {settings.raw_dir}; run `sample` first")
     mb = market_rows(raw, wanted, build)
-    trades, prints = trade_lines(raw, mb.tokens, build)
+    # census months (v3 D1): markets not already in a collection come from the listing pages
+    have = set(wanted.values())
+    census_only = {mid: cid for mid, cid in c_wanted.items() if cid not in have}
+    mbc = (
+        market_rows(
+            raw,
+            census_only,
+            build,
+            objects=listing_market_objects(raw, windows, set(census_only)),
+        )
+        if census_only
+        else MarketBuild([], [], [], {})
+    )
+    known_events = {e[0] for e in mb.events}
+    all_events = sorted(
+        mb.events + [e for e in mbc.events if e[0] not in known_events], key=lambda e: e[0]
+    )
+    all_tokens = {**mb.tokens, **mbc.tokens}
+    spool = settings.data_dir / "checkpoints" / "trade_prints.spool"
+    spool.parent.mkdir(parents=True, exist_ok=True)
+    prints = trade_lines(raw, all_tokens, build, spool)
+    n_prints = build.rows_written["trade_prints"]
     log.info(
-        "markets=%d tokens=%d prints=%d; loading", len(mb.markets), len(mb.tokens), len(trades)
+        "markets=%d (+%d census) tokens=%d prints=%d; loading",
+        len(mb.markets),
+        len(mbc.markets),
+        len(all_tokens),
+        n_prints,
     )
 
     with psycopg.connect(psycopg_url(settings.database_url)) as conn:
@@ -449,10 +572,23 @@ def rebuild(settings: IngestSettings) -> RebuildResult:
                 "source_url, notes",
                 fees,
             )
-            _copy_rows(cur, "collections", "id, name, definition, created_at", collections)
-            _copy_rows(cur, "collection_markets", "collection_id, condition_id", members)
             _copy_rows(
-                cur, "events", "id, slug, title, category, tags, created_at, ingested_at", mb.events
+                cur,
+                "collections",
+                "id, name, definition, created_at",
+                sorted(collections + c_collections, key=lambda r: r[0]),
+            )
+            _copy_rows(
+                cur,
+                "collection_markets",
+                "collection_id, condition_id",
+                sorted(set(members + c_members)),
+            )
+            _copy_rows(
+                cur,
+                "events",
+                "id, slug, title, category, tags, created_at, ingested_at",
+                all_events,
             )
             _copy_rows(
                 cur,
@@ -461,35 +597,60 @@ def rebuild(settings: IngestSettings) -> RebuildResult:
                 "tick_size, min_order_size, fees_enabled, fee_type, fee_rate, fee_exponent, "
                 "created_at, open_ts, end_date, closed_time, resolved_at, resolution, "
                 "final_volume, ingested_at, deadline_type, neg_risk_other",
-                mb.markets,
+                sorted(mb.markets + mbc.markets, key=lambda r: r[0]),
             )
             _copy_rows(
                 cur,
                 "outcomes",
                 "clob_token_id, condition_id, outcome_index, outcome_name",
-                mb.outcomes,
+                sorted(mb.outcomes + mbc.outcomes),
             )
+            # Bulk load without the secondary indexes: maintaining them row by row made the
+            # COPY of 68M prints take hours; rebuilding them afterwards takes minutes. The
+            # primary key stays (Timescale needs it); the unique key is guaranteed by the
+            # per-market de-duplication above and re-checked when the constraint returns.
+            cur.execute("ALTER TABLE trade_prints DROP CONSTRAINT uq_trade_prints_print_key_ts")
+            cur.execute("DROP INDEX ix_trade_prints_clob_token_id_ts")
             _copy_lines(
                 cur,
                 "trade_prints",
                 "ts, print_key, condition_id, clob_token_id, price, size, side, proxy_wallet",
-                trades,
+                _spooled(spool),
+            )
+            cur.execute(
+                "ALTER TABLE trade_prints ADD CONSTRAINT uq_trade_prints_print_key_ts "
+                "UNIQUE (print_key, ts)"
+            )
+            cur.execute(
+                "CREATE INDEX ix_trade_prints_clob_token_id_ts ON trade_prints (clob_token_id, ts)"
             )
             n_bars = _copy_lines(
                 cur,
                 "price_bars",
                 "clob_token_id, ts, price, is_stale, staleness_minutes, source",
-                bar_lines(raw, mb.tokens, prints, build),
+                itertools.chain(
+                    bar_lines(raw, mb.tokens, prints, build),
+                    bar_lines(raw, mbc.tokens, prints, build, fidelity=60),
+                ),
             )
             log.info("price_bars loaded: %d; hashing", n_bars)
 
             digest = content_hash(conn)
-            quality = build_quality(conn, build.as_dict())
+            try:
+                # A savepoint, so a failed report statement does not abort the load's
+                # transaction; no parallel workers, whose dynamic shared memory is what ran out
+                # (Docker's /dev/shm) on the 76M-print self-join.
+                with conn.transaction():
+                    cur.execute("SET LOCAL max_parallel_workers_per_gather = 0")
+                    quality = build_quality(conn, build.as_dict())
+            except Exception:  # a report must not discard a multi-hour load
+                log.exception("data-quality report failed; the build is kept without it")
+                quality = {"build": build.as_dict(), "error": traceback.format_exc()[-4000:]}
             counts = {
-                "markets": len(mb.markets),
-                "tokens": len(mb.tokens),
+                "markets": len(mb.markets) + len(mbc.markets),
+                "tokens": len(all_tokens),
                 "bars": n_bars,
-                "prints": len(trades),
+                "prints": n_prints,
             }
             version_id = uuid.uuid4()
             cur.execute(
@@ -510,6 +671,7 @@ def rebuild(settings: IngestSettings) -> RebuildResult:
                     json.dumps(quality, sort_keys=True),
                 ),
             )
+    spool.unlink(missing_ok=True)
     return RebuildResult(version_id, digest, counts, quality)
 
 

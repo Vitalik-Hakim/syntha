@@ -149,7 +149,12 @@ def cmd_census_sample(args: argparse.Namespace) -> int:
 
 def cmd_census_fetch(args: argparse.Namespace) -> int:
     report = asyncio.run(
-        census.fetch_census(_settings(args), args.month, concurrency=args.concurrency)
+        census.fetch_census(
+            _settings(args),
+            args.month,
+            concurrency=args.concurrency,
+            prices_rps=args.prices_rps,
+        )
     )
     print(json.dumps(asdict(report), indent=2))
     if report.units_failed:
@@ -247,6 +252,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     cf.add_argument("--month", required=True)
     cf.add_argument("--concurrency", type=int)
+    cf.add_argument(
+        "--prices-rps", type=float, help="separate rate for the CLOB price phase (limit 100/s)"
+    )
     cf.set_defaults(func=cmd_census_fetch)
     cb = sub.add_parser("census-build", help="build census_* tables from raw/ and hash them")
     cb.add_argument("--month", required=True)

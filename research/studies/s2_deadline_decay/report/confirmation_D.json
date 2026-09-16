@@ -1,0 +1,293 @@
+{
+ "generated_at": "2026-09-16T11:10:31+00:00",
+ "results": {
+  "S2 deadline decay: NO at -72h on BY markets": {
+   "file": "research/studies/s2_deadline_decay/rule_deadline_decay_no_72h.json",
+   "set": "D",
+   "months": [
+    "2025-07",
+    "2025-08",
+    "2025-09",
+    "2025-10",
+    "2025-11",
+    "2025-12",
+    "2026-02",
+    "2026-03",
+    "2026-04",
+    "2026-05"
+   ],
+   "per_month": {
+    "2025-07": {
+     "deciding": {
+      "run_id": "BT-20260916-00085",
+      "status": "DONE",
+      "roi": 0.0,
+      "n_trades": 0,
+      "return_per_dollar": null,
+      "capacity_1000": 0.0,
+      "signals": 1,
+      "filled": 0
+     },
+     "conservative": {
+      "run_id": "BT-20260916-00086",
+      "status": "DONE",
+      "roi": 0.0,
+      "n_trades": 0,
+      "return_per_dollar": null,
+      "capacity_1000": 0.0,
+      "signals": 1,
+      "filled": 0
+     }
+    },
+    "2025-08": {
+     "deciding": {
+      "run_id": "BT-20260916-00087",
+      "status": "DONE",
+      "roi": 0.00435092,
+      "n_trades": 1,
+      "return_per_dollar": 0.40252454417952316,
+      "capacity_1000": 10.604023537256152,
+      "signals": 8,
+      "filled": 1
+     },
+     "conservative": {
+      "run_id": "BT-20260916-00088",
+      "status": "DONE",
+      "roi": 0.0,
+      "n_trades": 0,
+      "return_per_dollar": null,
+      "capacity_1000": 0.0,
+      "signals": 8,
+      "filled": 0
+     }
+    },
+    "2025-09": {
+     "deciding": {
+      "run_id": "BT-20260916-00089",
+      "status": "DONE",
+      "roi": 0.00239,
+      "n_trades": 1,
+      "return_per_dollar": 0.3140604467805519,
+      "capacity_1000": 7.710833333333333,
+      "signals": 11,
+      "filled": 1
+     },
+     "conservative": {
+      "run_id": "BT-20260916-00090",
+      "status": "DONE",
+      "roi": 0.0,
+      "n_trades": 0,
+      "return_per_dollar": null,
+      "capacity_1000": 3.8554166666666667,
+      "signals": 11,
+      "filled": 0
+     }
+    },
+    "2025-10": {
+     "deciding": {
+      "run_id": "BT-20260916-00091",
+      "status": "DONE",
+      "roi": -0.02417796,
+      "n_trades": 4,
+      "return_per_dollar": -0.37969118357434817,
+      "capacity_1000": 67.63332062973407,
+      "signals": 11,
+      "filled": 4
+     },
+     "conservative": {
+      "run_id": "BT-20260916-00092",
+      "status": "DONE",
+      "roi": -0.01762628,
+      "n_trades": 2,
+      "return_per_dollar": -0.4406979849125969,
+      "capacity_1000": 66.06564556661118,
+      "signals": 11,
+      "filled": 2
+     }
+    },
+    "2025-11": {
+     "deciding": {
+      "run_id": "BT-20260916-00093",
+      "status": "DONE",
+      "roi": 0.0,
+      "n_trades": 0,
+      "return_per_dollar": null,
+      "capacity_1000": 0.0,
+      "signals": 3,
+      "filled": 0
+     },
+     "conservative": {
+      "run_id": "BT-20260916-00094",
+      "status": "DONE",
+      "roi": 0.0,
+      "n_trades": 0,
+      "return_per_dollar": null,
+      "capacity_1000": 0.0,
+      "signals": 3,
+      "filled": 0
+     }
+    },
+    "2025-12": {
+     "deciding": {
+      "run_id": "BT-20260916-00095",
+      "status": "DONE",
+      "roi": 0.0040953,
+      "n_trades": 1,
+      "return_per_dollar": 0.20481927710843373,
+      "capacity_1000": 19.637096774193548,
+      "signals": 21,
+      "filled": 1
+     },
+     "conservative": {
+      "run_id": "BT-20260916-00096",
+      "status": "DONE",
+      "roi": 0.00406614,
+      "n_trades": 1,
+      "return_per_dollar": 0.20336943441636582,
+      "capacity_1000": 19.637096774193548,
+      "signals": 21,
+      "filled": 1
+     }
+    },
+    "2026-02": {
+     "deciding": {
+      "run_id": "BT-20260916-00097",
+      "status": "DONE",
+      "roi": -0.0077927,
+      "n_trades": 1,
+      "return_per_dollar": -1.0,
+      "capacity_1000": 8.455640444036808,
+      "signals": 23,
+      "filled": 1
+     },
+     "conservative": {
+      "run_id": "BT-20260916-00098",
+      "status": "DONE",
+      "roi": 0.0,
+      "n_trades": 0,
+      "return_per_dollar": null,
+      "capacity_1000": 0.5435267454933036,
+      "signals": 23,
+      "filled": 0
+     }
+    },
+    "2026-03": {
+     "deciding": {
+      "run_id": "BT-20260916-00099",
+      "status": "DONE",
+      "roi": 0.01352281,
+      "n_trades": 10,
+      "return_per_dollar": 0.1191781518516498,
+      "capacity_1000": 112.26789450876895,
+      "signals": 50,
+      "filled": 10
+     },
+     "conservative": {
+      "run_id": "BT-20260916-00100",
+      "status": "DONE",
+      "roi": 0.03417168,
+      "n_trades": 4,
+      "return_per_dollar": 0.42720837242237364,
+      "capacity_1000": 84.03142712630637,
+      "signals": 51,
+      "filled": 4
+     }
+    },
+    "2026-04": {
+     "deciding": {
+      "run_id": "BT-20260916-00101",
+      "status": "DONE",
+      "roi": 0.01277108,
+      "n_trades": 5,
+      "return_per_dollar": 0.2013764977391605,
+      "capacity_1000": 64.91811400511692,
+      "signals": 36,
+      "filled": 5
+     },
+     "conservative": {
+      "run_id": "BT-20260916-00102",
+      "status": "DONE",
+      "roi": 0.00252224,
+      "n_trades": 1,
+      "return_per_dollar": 0.12612612612612611,
+      "capacity_1000": 30.68353604125208,
+      "signals": 36,
+      "filled": 1
+     }
+    },
+    "2026-05": {
+     "deciding": {
+      "run_id": "BT-20260916-00103",
+      "status": "DONE",
+      "roi": 0.00792986,
+      "n_trades": 4,
+      "return_per_dollar": 0.17027214822398504,
+      "capacity_1000": 46.15704259970979,
+      "signals": 56,
+      "filled": 4
+     },
+     "conservative": {
+      "run_id": "BT-20260916-00104",
+      "status": "DONE",
+      "roi": 0.0,
+      "n_trades": 0,
+      "return_per_dollar": null,
+      "capacity_1000": 6.6562840910675956,
+      "signals": 57,
+      "filled": 0
+     }
+    }
+   },
+   "pooled_deciding": {
+    "n_trades": 27,
+    "net": 13.08931,
+    "notional": 333.34223,
+    "return_per_dollar": 0.039266881966920304,
+    "ci90": [
+     -0.13547319640490144,
+     0.18944360931970256
+    ],
+    "key": "event",
+    "se": 0.09910875610436858,
+    "mde_80": 0.24578971513883408,
+    "by_key": {
+     "event": [
+      -0.13547319640490144,
+      0.18944360931970256
+     ],
+     "day": [
+      -0.1445954633902357,
+      0.15574788627206737
+     ]
+    }
+   },
+   "pooled_conservative": {
+    "n_trades": 8,
+    "net": 23.13378,
+    "notional": 159.97622,
+    "return_per_dollar": 0.14460761730712227,
+    "ci90": [
+     -0.3258278635814032,
+     0.3584548756668958
+    ],
+    "key": "day",
+    "se": 0.2305101610557088,
+    "mde_80": 0.5716651994181577,
+    "by_key": {
+     "event": [
+      -0.152340851994962,
+      0.40094413779933635
+     ],
+     "day": [
+      -0.3258278635814032,
+      0.3584548756668958
+     ]
+    }
+   },
+   "months_positive": 6,
+   "months_with_trades": 8,
+   "capacity_1000_mean": 33.73839658321496,
+   "passes_set_rule": false
+  }
+ }
+}

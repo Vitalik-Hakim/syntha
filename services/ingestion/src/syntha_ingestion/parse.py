@@ -69,7 +69,46 @@ DURATION_CLASSES: tuple[tuple[str, int], ...] = (
 )
 
 
-def duration_class(open_ts: datetime, end_ts: datetime) -> str:
+_CLOCK = r"(\d{1,2})(?::(\d{2}))?\s*([AP]M)"
+_TIME_RANGE = re.compile(rf"{_CLOCK}\s*[-–]\s*{_CLOCK}", re.IGNORECASE)
+_MINUTE_WORDS = re.compile(r"\b(\d{1,3})[- ]minutes?\b", re.IGNORECASE)
+_UP_OR_DOWN = re.compile(r"\bup or down\b", re.IGNORECASE)
+_SINGLE_CLOCK = re.compile(rf"\b{_CLOCK}\s*(?:ET|EST|EDT|UTC)?\b", re.IGNORECASE)
+
+
+def question_window_minutes(question: str | None) -> int | None:
+    """The market's own window when the question states one ("Bitcoin Up or Down - March 28,
+    4:15AM-4:30AM ET" → 15; "…in the next 5 minutes" → 5), else None. Verified on the census:
+    these markets are listed days ahead, so `end − open` alone calls them multi-day."""
+    if not question:
+        return None
+    m = _TIME_RANGE.search(question)
+    if m:
+        h1, m1, p1, h2, m2, p2 = m.groups()
+
+        def minutes(h: str, mm: str | None, p: str) -> int:
+            hour = int(h) % 12 + (12 if p.upper() == "PM" else 0)
+            return hour * 60 + int(mm or 0)
+
+        span = minutes(h2, m2, p2) - minutes(h1, m1, p1)
+        if span <= 0:
+            span += 24 * 60
+        return span
+    w = _MINUTE_WORDS.search(question)
+    if w:
+        return int(w.group(1))
+    # the 2025 hourly series states one clock time: "Bitcoin Up or Down - August 5, 12PM ET"
+    if _UP_OR_DOWN.search(question) and _SINGLE_CLOCK.search(question):
+        return 60
+    return None
+
+
+def duration_class(open_ts: datetime, end_ts: datetime, question: str | None = None) -> str:
+    """v3 §4.1: scheduled end − open, except that a question stating a window of at most an
+    hour is `ultra_short` whatever its listing lead (M9 finding, docs/DATA_NOTES.md)."""
+    window = question_window_minutes(question)
+    if window is not None and window <= 60:
+        return "ultra_short"
     seconds = (end_ts - open_ts).total_seconds()
     for label, limit in DURATION_CLASSES:
         if seconds <= limit:

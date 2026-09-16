@@ -84,6 +84,7 @@ def load_fixture(directory: Path) -> Fixture:
             fee_exponent=m.get("fee_exponent"),
             is_catch_all=m.get("is_catch_all"),
             neg_risk=m.get("neg_risk"),
+            deadline_type=m.get("deadline_type"),
         )
         settlements[cid] = Settlement(
             resolution=m.get("resolution", "UNRESOLVED"),

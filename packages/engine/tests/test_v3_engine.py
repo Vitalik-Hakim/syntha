@@ -3,6 +3,7 @@ point-in-time EventView behind basket trades."""
 
 from __future__ import annotations
 
+import dataclasses
 from decimal import Decimal
 from typing import Any
 
@@ -259,3 +260,36 @@ def test_baskets_are_refused_on_final_volume_filtered_collections() -> None:
         }
     )
     assert prepare(plain, filtered, st) is not None
+
+
+def test_universe_deadline_types_filters_markets_before_anything_runs() -> None:
+    n = 10
+    markets = {
+        "by": _market("by", "e1", neg_risk=False),
+        "on": _market("on", "e2", neg_risk=False),
+    }
+    markets["by"] = dataclasses.replace(markets["by"], deadline_type="BY")
+    markets["on"] = dataclasses.replace(markets["on"], deadline_type="ON")
+    tokens = {"by-yes": _token("by", [0.30] * n), "on-yes": _token("on", [0.30] * n)}
+    ds = Dataset(markets, tokens)
+    st = SettlementTable({cid: Settlement("UNRESOLVED", None, None) for cid in markets})
+    request = BacktestRequest.model_validate(
+        {
+            "strategy": {
+                "name": "by-only",
+                "universe": {"side": "BUY_YES", "deadline_types": ["BY"]},
+                "entry": {"all": [{"feature": "price", "op": "lte", "value": 0.5}]},
+                "sizing": {"mode": "FIXED_CASH", "value": 5},
+                "constraints": {"max_open_positions": 5, "max_positions_per_event": 1},
+                "order": {"type": "MARKET"},
+            },
+            "execution": {
+                "model": "LAST_PRICE",
+                "slippage_ticks": 0,
+                "liquidity_participation": None,
+            },
+            "honesty": {"permutations": 0, "random_baselines": 0, "bootstrap_iterations": 0},
+        }
+    )
+    result = _run(request, ds, st)
+    assert {t["condition_id"] for t in result.trades} == {"by"}

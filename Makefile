@@ -140,7 +140,7 @@ census-sample: ## Draw the calibration census for MONTH (PRD v3 D1): make census
 
 .PHONY: census-fetch
 census-fetch: ## Fetch the census month at 20 rps (resumable): make census-fetch MONTH=2025-07
-	$(INGEST) --rps $(or $(RPS),20) census-fetch --month $(MONTH) --concurrency 16
+	$(INGEST) --rps $(or $(RPS),20) census-fetch --month $(MONTH) --concurrency 16 --prices-rps 40
 
 .PHONY: census-build
 census-build: ## Build census_markets / census_observations for MONTH from data/raw and record the hash

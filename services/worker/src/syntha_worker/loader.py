@@ -16,7 +16,7 @@ import itertools
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -123,6 +123,7 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
         "collection": sel.collection,
         "conditions": sel.condition_ids,
         "categories": [c.lower() for c in universe.categories] if universe.categories else None,
+        "deadline_types": list(universe.deadline_types) if universe.deadline_types else None,
         "start": sel.start,
         "end": sel.end,
         "outcome_indexes": outcome_indexes,
@@ -134,6 +135,8 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
                  JOIN collections c ON c.id = cm.collection_id WHERE c.name = %(collection)s))
           AND (%(conditions)s::text[] IS NULL OR m.condition_id = ANY(%(conditions)s::text[]))
           AND (%(categories)s::text[] IS NULL OR lower(m.category) = ANY(%(categories)s::text[]))
+          AND (%(deadline_types)s::text[] IS NULL
+               OR coalesce(m.deadline_type, 'NONE') = ANY(%(deadline_types)s::text[]))
     """
     with psycopg.connect(database_url) as conn:
         conn.execute("SET TIME ZONE 'UTC'")
@@ -155,7 +158,8 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
         rows = conn.execute(
             "SELECT m.condition_id, m.event_id, m.category, m.tick_size, m.min_order_size, m.created_at, "
             "m.open_ts, m.end_date, m.fees_enabled, m.fee_type, m.fee_rate, m.fee_exponent, "
-            "m.resolution, m.resolved_at, m.closed_time, m.neg_risk, r.is_catch_all "
+            "m.resolution, m.resolved_at, m.closed_time, m.neg_risk, r.is_catch_all, "
+            "m.deadline_type "
             + market_filter.replace(
                 "FROM markets m",
                 "FROM markets m LEFT JOIN catch_all_reviews r ON r.condition_id = m.condition_id",
@@ -181,6 +185,7 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
                 fee_exponent=r[11],
                 neg_risk=r[15],
                 is_catch_all=r[16],  # a reviewed verdict or None; never inferred here
+                deadline_type=r[17],
             )
             # ENGINE-RESTRICTED columns go only to settlement.
             settlements[r[0]] = Settlement(r[12] or "UNRESOLVED", _epoch(r[13]), _epoch(r[14]))
@@ -191,7 +196,27 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
             {"ids": list(markets), "idx": outcome_indexes},
         ).fetchall()
         token_ids = [o[0] for o in outcomes]
-        window = {"tokens": token_ids, "start": sel.start, "end": sel.end}
+        # Time bounds for chunk exclusion: bars and prints of these markets lie between the
+        # earliest open and the latest close (or now). Without them every token lookup probes
+        # every chunk of the hypertables (~0.2 s per token; 7 minutes for a census month, M9).
+        span = conn.execute(
+            "SELECT min(open_ts), max(coalesce(closed_time, end_date, now())) FROM markets "
+            "WHERE condition_id = ANY(%(ids)s)",
+            {"ids": list(markets)},
+        ).fetchone()
+        lo = span[0] if span else None
+        hi = span[1] if span else None
+        if sel.start is not None:
+            lo = sel.start if lo is None else max(lo, sel.start)
+        if sel.end is not None:
+            hi = sel.end if hi is None else min(hi, sel.end)
+        window = {
+            "tokens": token_ids,
+            "start": sel.start,
+            "end": sel.end,
+            "lo": None if lo is None else lo - timedelta(days=1),
+            "hi": None if hi is None else hi + timedelta(days=2),
+        }
         log.info("loading %d markets / %d tokens", len(markets), len(token_ids))
 
         bars = _copy_frame(
@@ -200,7 +225,8 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
             SELECT t.idx, extract(epoch FROM b.ts)::bigint, b.price
             FROM price_bars b
             JOIN unnest(%(tokens)s::text[]) WITH ORDINALITY AS t(token, idx) ON b.clob_token_id = t.token
-            WHERE TRUE
+            WHERE (%(lo)s::timestamptz IS NULL OR b.ts >= %(lo)s)
+              AND (%(hi)s::timestamptz IS NULL OR b.ts <= %(hi)s)
               AND (%(start)s::timestamptz IS NULL OR b.ts >= %(start)s)
               AND (%(end)s::timestamptz IS NULL OR b.ts <= %(end)s)
         """,
@@ -214,7 +240,8 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
                    CASE p.side WHEN 'BUY' THEN 1 ELSE -1 END, p.proxy_wallet
             FROM trade_prints p
             JOIN unnest(%(tokens)s::text[]) WITH ORDINALITY AS t(token, idx) ON p.clob_token_id = t.token
-            WHERE TRUE
+            WHERE (%(lo)s::timestamptz IS NULL OR p.ts >= %(lo)s)
+              AND (%(hi)s::timestamptz IS NULL OR p.ts <= %(hi)s)
               AND (%(start)s::timestamptz IS NULL OR p.ts >= %(start)s)
               AND (%(end)s::timestamptz IS NULL OR p.ts <= %(end)s)
         """,
@@ -228,16 +255,20 @@ def load_dataset(database_url: str, request: BacktestRequest) -> LoadedDataset:
                 "wallet": pl.Utf8,
             },
         )
-        prior: dict[str, float] = dict(
-            conn.execute(
-                """
-            SELECT clob_token_id, sum(price * size)::float8 FROM trade_prints
-            WHERE clob_token_id = ANY(%(tokens)s) AND %(start)s::timestamptz IS NOT NULL AND ts < %(start)s
-            GROUP BY 1
-        """,
-                window,
-            ).fetchall()
-        )
+        prior: dict[str, float] = {}
+        if sel.start is not None:
+            prior = dict(
+                conn.execute(
+                    """
+                SELECT t.token, p.notional FROM unnest(%(tokens)s::text[]) AS t(token)
+                CROSS JOIN LATERAL (
+                  SELECT sum(price * size)::float8 AS notional FROM trade_prints
+                  WHERE clob_token_id = t.token AND ts < %(start)s
+                ) p WHERE p.notional IS NOT NULL
+            """,
+                    window,
+                ).fetchall()
+            )
 
         schedules = tuple(
             FeeScheduleEntry(

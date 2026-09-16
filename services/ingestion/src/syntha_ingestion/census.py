@@ -134,7 +134,7 @@ def classify(market: dict[str, Any], event: dict[str, Any] | None) -> FrameMarke
         condition_id=str(market["conditionId"]),
         event_id=str(events[0]["id"]) if events and events[0].get("id") is not None else None,
         category=category,
-        duration=duration_class(start, end),
+        duration=duration_class(start, end, market.get("question")),
         structure="sibling" if n_markets >= SIBLING_MIN_MARKETS else "binary",
         tokens=tokens,
     )
@@ -177,12 +177,22 @@ def _listing_markets(
     return out
 
 
-def _latest_events(raw: RawStore) -> dict[str, dict[str, Any]]:
-    out: dict[str, dict[str, Any]] = {}
+def _latest_events(raw: RawStore, wanted: set[str] | None = None) -> dict[str, dict[str, Any]]:
+    """Newest saved object per event id; only `wanted` ids are decoded when given."""
+    latest: dict[str, RawRecord] = {}
     for rec in raw.records(pm.GAMMA_EVENT):
-        if rec.status == 200 and rec.unit.get("id") is not None:
-            out[str(rec.unit["id"])] = rec.json()
-    return out
+        eid = rec.unit.get("id")
+        if rec.status == 200 and eid is not None and (wanted is None or str(eid) in wanted):
+            latest[str(eid)] = rec
+    return {eid: rec.json() for eid, rec in latest.items()}
+
+
+def _event_ids_saved(raw: RawStore) -> set[str]:
+    return {
+        str(rec.unit["id"])
+        for rec in raw.records(pm.GAMMA_EVENT)
+        if rec.status == 200 and rec.unit.get("id") is not None
+    }
 
 
 def _event_id(market: dict[str, Any]) -> str | None:
@@ -227,8 +237,6 @@ async def sample_census(
         listed = _listing_markets(raw, end_date_min, end_date_max)
         log.info("listed %d closed markets ending in %s", len(listed), month)
 
-        event_ids = sorted({e for m in listed.values() if (e := _event_id(m)) is not None})
-        have = _latest_events(raw)
         checkpoints = Checkpoints(settings.checkpoint_dir, f"{name}-events")
         report = FetchReport()
 
@@ -236,28 +244,50 @@ async def sample_census(
             await pm.fetch_event(api, eid)
             return {}
 
-        await _run_units(
-            [(f"event:{e}", partial(event_job, e)) for e in event_ids if e not in have],
-            checkpoints,
-            report,
-            concurrency or settings.concurrency,
-            "events",
-        )
-        events = _latest_events(raw)
+        async def fetch_events(ids: set[str], phase: str) -> None:
+            have = _event_ids_saved(raw)
+            await _run_units(
+                [(f"event:{e}", partial(event_job, e)) for e in sorted(ids - have)],
+                checkpoints,
+                report,
+                concurrency or settings.concurrency,
+                phase,
+            )
+
+        # Stage 1: events are needed *before* allocation only where the category must come
+        # from tags (no feeType: every 2025 market, few 2026 ones). Structure is not a
+        # stratification dimension, so the other events can wait until the sample is drawn.
+        stage1 = {e for m in listed.values() if not m.get("feeType") and (e := _event_id(m))}
+        await fetch_events(stage1, "events (categories)")
+        events = _latest_events(raw, stage1)
+        frame: list[FrameMarket] = []
+        skipped = 0
+        for m in listed.values():
+            eid = _event_id(m)
+            fm = classify(m, events.get(eid) if eid else None)
+            if fm is None:
+                skipped += 1
+                continue
+            frame.append(fm)
+        chosen = allocate(frame, seed, per_stratum, ultra_short_cap)
+
+        # Stage 2: the sampled markets' events, for sibling counts and tags on the record
+        stage2 = {fm.event_id for fm in chosen if fm.event_id is not None}
+        await fetch_events(stage2, "events (sampled)")
+        events = _latest_events(raw, stage1 | stage2)
+        chosen = [
+            c
+            for c in (
+                classify(listed[fm.condition_id], events.get(fm.event_id) if fm.event_id else None)
+                for fm in chosen
+            )
+            if c is not None
+        ]
+        event_ids = sorted(stage1 | stage2)
     finally:
         if own_client:
             await api.aclose()
 
-    frame: list[FrameMarket] = []
-    skipped = 0
-    for m in listed.values():
-        eid = _event_id(m)
-        fm = classify(m, events.get(eid) if eid else None)
-        if fm is None:
-            skipped += 1
-            continue
-        frame.append(fm)
-    chosen = allocate(frame, seed, per_stratum, ultra_short_cap)
     strata: dict[str, dict[str, int]] = {}
     for fm in frame:
         strata.setdefault(fm.stratum, {"available": 0, "selected": 0})["available"] += 1
@@ -327,8 +357,11 @@ async def fetch_census(
     month: str,
     *,
     concurrency: int | None = None,
+    prices_rps: float | None = None,
     client: ApiClient | None = None,
 ) -> FetchReport:
+    """`prices_rps` runs the CLOB price phase on its own bucket (documented CLOB limit 100/s
+    against 30/s on the trades endpoint, docs/DATA_NOTES.md); None = the shared rate."""
     raw = RawStore(settings.raw_dir)
     manifest = load_manifest(raw, month)
     end_date_min, end_date_max = month_window(month)
@@ -339,6 +372,12 @@ async def fetch_census(
     workers = concurrency or settings.concurrency
     own_client = client is None
     api = client or ApiClient(raw, requests_per_second=settings.requests_per_second)
+    prices_api = (
+        ApiClient(raw, requests_per_second=prices_rps)
+        if own_client and prices_rps is not None
+        else api
+    )
+    price_workers = max(workers, int(prices_rps)) if prices_rps is not None else workers
     try:
         members = manifest["markets"]
         conditions = sorted(m["condition_id"] for m in members)
@@ -394,21 +433,23 @@ async def fetch_census(
                     async def price_job(
                         t: str = str(token), a: int = ws, b: int = we, f: int = fidelity
                     ) -> dict[str, Any]:
-                        points = await pm.fetch_price_history(api, t, a, b, f)
+                        points = await pm.fetch_price_history(prices_api, t, a, b, f)
                         report.price_points += points
                         return {"points": points}
 
                     price_units.append((f"prices:{token}:{fidelity}:{ws}:{we}", price_job))
         await _run_units(trade_units, checkpoints, report, workers, "trades")
-        await _run_units(price_units, checkpoints, report, workers, "prices")
+        await _run_units(price_units, checkpoints, report, price_workers, "prices")
     finally:
         if own_client:
             await api.aclose()
+            if prices_api is not api:
+                await prices_api.aclose()
         log.info(
             "requests=%d retries=%d failures=%d",
-            api.stats.requests,
-            api.stats.retries,
-            api.stats.failures,
+            api.stats.requests + (prices_api.stats.requests if prices_api is not api else 0),
+            api.stats.retries + (prices_api.stats.retries if prices_api is not api else 0),
+            api.stats.failures + (prices_api.stats.failures if prices_api is not api else 0),
         )
     return report
 
@@ -474,17 +515,22 @@ def staleness_minutes(print_times: Sequence[int], ts: int) -> int | None:
 
 def fill_in_window(
     prints: Sequence[Print], ts: int, window_s: int, limit: float
-) -> tuple[float | None, float]:
-    """(VWAP, shares) of taker-BUY prints in [ts, ts + window) at or below `limit`; None when
-    nothing printed there — a fill that could not have happened is never invented."""
+) -> tuple[float | None, float, float | None]:
+    """(VWAP, shares, first print) of taker-BUY prints in [ts, ts + window) at or below `limit`;
+    None when nothing printed there — a fill that could not have happened is never invented.
+    The first qualifying print is the earliest evidence that an ask at or below the limit
+    existed; the window VWAP also averages in later dips (M9 finding, docs/DATA_NOTES.md)."""
     times = [p.ts for p in prints]
     lo, hi = bisect_left(times, ts), bisect_left(times, ts + window_s)
     notional = shares = 0.0
+    first: float | None = None
     for p in prints[lo:hi]:
         if p.side == 1 and p.price <= limit + 1e-12:
             notional += p.price * p.size
             shares += p.size
-    return (notional / shares if shares > 0 else None), shares
+            if first is None:
+                first = p.price
+    return (notional / shares if shares > 0 else None), shares, first
 
 
 def liquidity_24h(prints: Sequence[Print], ts: int, walk: PrintWalk) -> float | None:
@@ -557,8 +603,8 @@ def observations(
         print_times = [p.ts for p in token_prints]
         for label, ts in offset_times(m.open_s, m.end_s, m.close_s):
             mid = mid_at(series, ts)
-            fill_10: tuple[float | None, float] = (None, 0.0)
-            fill_30: tuple[float | None, float] = (None, 0.0)
+            fill_10: tuple[float | None, float, float | None] = (None, 0.0, None)
+            fill_30: tuple[float | None, float, float | None] = (None, 0.0, None)
             if mid is not None and m.walk.covers(ts):
                 fill_10 = fill_in_window(token_prints, ts, FILL_WINDOWS[0][1], mid + tick)
                 fill_30 = fill_in_window(token_prints, ts, FILL_WINDOWS[1][1], mid + tick)
@@ -589,6 +635,7 @@ def observations(
                     None if fee_hist is None else f"{fee_hist:.6f}",
                     None if fee_cur is None else f"{fee_cur:.6f}",
                     _dec(payout_for(m.resolution, idx)),
+                    None if fill_10[2] is None else f"{fill_10[2]:.6f}",
                 )
             )
     return rows
@@ -739,7 +786,9 @@ def market_inputs(
         event_id=member.get("event_id"),
         tokens=tokens,
         category=category,
-        duration=member["stratum"].split("/")[1],
+        # re-derived at build time: the question's own window can mark a market ultra_short
+        # that the sampler (end − open) put in a longer stratum
+        duration=duration_class(start, end, g.get("question")),
         structure=member["structure"],
         deadline=deadline_type(g.get("question")),
         neg_risk=bool(g.get("negRisk")),
@@ -760,7 +809,7 @@ def build_census(settings: IngestSettings, month: str) -> CensusBuild:
     census_id = manifest["name"]
     end_date_min, end_date_max = month_window(month)
     listed = _listing_markets(raw, end_date_min, end_date_max)
-    events = _latest_events(raw)
+    events = _latest_events(raw, {m["event_id"] for m in manifest["markets"] if m.get("event_id")})
     schedules = fee_entries()
 
     v2_rows: dict[str, dict[str, Any]] = {}
@@ -863,7 +912,8 @@ def build_census(settings: IngestSettings, month: str) -> CensusBuild:
             with cur.copy(
                 "COPY census_observations (census_id, condition_id, clob_token_id, event_id, "
                 "outcome_index, offset_label, ts, mid, staleness_minutes, fill_10m, fill_30m, "
-                "fill_size_10m, liq_24h, fee_entry, fee_entry_current, payout) FROM STDIN"
+                "fill_size_10m, liq_24h, fee_entry, fee_entry_current, payout, fill_first_10m) "
+                "FROM STDIN"
             ) as cp:
                 for row in obs_rows:
                     cp.write_row(row)

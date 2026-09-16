@@ -1,0 +1,132 @@
+{
+ "generated_at": "2026-09-16T11:14:37+00:00",
+ "results": {
+  "S2 deadline decay: NO at -72h on BY markets": {
+   "file": "research/studies/s2_deadline_decay/rule_deadline_decay_no_72h.json",
+   "set": "C1",
+   "months": [
+    "2026-06",
+    "2026-07",
+    "2026-08"
+   ],
+   "per_month": {
+    "2026-06": {
+     "deciding": {
+      "run_id": "BT-20260916-00105",
+      "status": "DONE",
+      "roi": -0.02964453,
+      "n_trades": 3,
+      "return_per_dollar": -0.6917478735620248,
+      "capacity_1000": 43.452386422731685,
+      "signals": 31,
+      "filled": 3
+     },
+     "conservative": {
+      "run_id": "BT-20260916-00106",
+      "status": "DONE",
+      "roi": -0.03999959,
+      "n_trades": 2,
+      "return_per_dollar": -1.0,
+      "capacity_1000": 37.264932648865845,
+      "signals": 31,
+      "filled": 2
+     }
+    },
+    "2026-07": {
+     "deciding": {
+      "run_id": "BT-20260916-00107",
+      "status": "DONE",
+      "roi": 0.01721577,
+      "n_trades": 3,
+      "return_per_dollar": 0.5530272026459313,
+      "capacity_1000": 34.86239560178482,
+      "signals": 38,
+      "filled": 3
+     },
+     "conservative": {
+      "run_id": "BT-20260916-00108",
+      "status": "DONE",
+      "roi": 0.00493614,
+      "n_trades": 1,
+      "return_per_dollar": 0.24688279301745636,
+      "capacity_1000": 41.453526483246975,
+      "signals": 40,
+      "filled": 1
+     }
+    },
+    "2026-08": {
+     "deciding": {
+      "run_id": "BT-20260916-00109",
+      "status": "DONE",
+      "roi": 0.05214682,
+      "n_trades": 3,
+      "return_per_dollar": 0.8692795541815896,
+      "capacity_1000": 58.91129032258065,
+      "signals": 34,
+      "filled": 3
+     },
+     "conservative": {
+      "run_id": "BT-20260916-00110",
+      "status": "DONE",
+      "roi": 0.03465684,
+      "n_trades": 3,
+      "return_per_dollar": 0.5776450002816818,
+      "capacity_1000": 58.91129032258065,
+      "signals": 34,
+      "filled": 3
+     }
+    }
+   },
+   "pooled_deciding": {
+    "n_trades": 9,
+    "net": 39.71806,
+    "notional": 133.97314,
+    "return_per_dollar": 0.2964628581520147,
+    "ci90": [
+     -0.19496590222473617,
+     0.7272229073613748
+    ],
+    "key": "day",
+    "se": 0.28131652275784,
+    "mde_80": 0.6976649764394433,
+    "by_key": {
+     "event": [
+      -0.19071565415042466,
+      0.7289809893335044
+     ],
+     "day": [
+      -0.19496590222473617,
+      0.7272229073613748
+     ]
+    }
+   },
+   "pooled_conservative": {
+    "n_trades": 6,
+    "net": -0.40661,
+    "notional": 119.99023,
+    "return_per_dollar": -0.0033886925627194813,
+    "ci90": [
+     -0.5420289946862075,
+     0.4820922283119423
+    ],
+    "key": "event",
+    "se": 0.299171588184055,
+    "mde_80": 0.7419455386964563,
+    "by_key": {
+     "event": [
+      -0.5420289946862075,
+      0.4820922283119423
+     ],
+     "day": [
+      -0.5244638495034396,
+      0.4757821535534236
+     ]
+    }
+   },
+   "months_positive": 2,
+   "months_with_trades": 3,
+   "capacity_1000_mean": 45.74202411569905,
+   "passes_set_rule": false
+  }
+ }
+}

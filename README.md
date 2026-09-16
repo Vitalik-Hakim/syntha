@@ -66,6 +66,14 @@ make census-build MONTH=2025-07                  # census_markets / census_obser
 make census-verify MONTH=2025-07                 # the tables still match the recorded build
 ```
 
+M9 research tooling (PRD v3 Stage 4): `tools/research/census_months.sh` drives the four census
+steps per month; `tools/research/s1_calibration.py discovery` writes the S1 calibration surface
+(660 pre-registered cells, cluster CIs, BH at 10% FDR, negative space with MDE);
+`tools/research/confirm.py run --study … --set D|C1|C2` runs a registered rule through the engine
+on the `census-<month>` collections (60-minute bars) and `confirm.py verdict` applies PRD v3
+§6.2. Outcomes: S1 no candidate, S2 rejected — `research/studies/*/README.md`, register rows
+R-0045…R-0768 in `docs/research/REGISTER.md`.
+
 Other collections: `make ingest-sample COLLECTION=name SAMPLE_START=… SAMPLE_END=… SAMPLE_N=…
 SAMPLE_SEED=…`, then `make ingest-fetch COLLECTION=name`. Read
 [docs/DATA_NOTES.md](docs/DATA_NOTES.md) before trusting any number: the "price history" is

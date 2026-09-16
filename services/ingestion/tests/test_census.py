@@ -66,11 +66,11 @@ def test_mid_staleness_fill_and_liquidity_rules() -> None:
     prints.sort(key=lambda p: p.ts)
     yes = [p for p in prints if p.token == YES]
     assert C.staleness_minutes([p.ts for p in yes], ts) == 50  # the sell 50 min before counts
-    vwap10, size10 = C.fill_in_window(yes, ts, 600, 0.41)
-    assert (vwap10, size10) == (0.40, 100.0)
-    vwap30, size30 = C.fill_in_window(yes, ts, 1800, 0.41)
-    assert vwap30 == pytest.approx((40 + 20.5) / 150) and size30 == 150.0
-    assert C.fill_in_window(yes, ts, 600, 0.35) == (None, 0.0)  # nothing at or below the limit
+    vwap10, size10, first10 = C.fill_in_window(yes, ts, 600, 0.41)
+    assert (vwap10, size10, first10) == (0.40, 100.0, 0.40)
+    vwap30, size30, first30 = C.fill_in_window(yes, ts, 1800, 0.41)
+    assert vwap30 == pytest.approx((40 + 20.5) / 150) and size30 == 150.0 and first30 == 0.40
+    assert C.fill_in_window(yes, ts, 600, 0.35) == (None, 0.0, None)  # nothing at the limit
     complete = C.PrintWalk(yes, complete=True, truncated=False)
     assert C.liquidity_24h(yes, ts, complete) == pytest.approx(4.0 + 3.9)
     partial = C.PrintWalk(yes, complete=False, truncated=True)
@@ -121,7 +121,8 @@ def test_observation_rows_by_hand() -> None:
     rows = C.observations(inputs, schedules, "census-test")
     by_key = {(r[2], r[5]): r for r in rows}
     assert len(rows) == 12  # 6 offsets × 2 tokens
-    row = by_key[(YES, "-24h")]
+    assert by_key[(YES, "-24h")][16] == "0.400000"  # first qualifying print
+    row = by_key[(YES, "-24h")][:16]
     (
         _cid,
         cond,

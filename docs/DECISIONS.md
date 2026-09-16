@@ -542,3 +542,84 @@ row and noting the date.
 - **Ingestion depends on the engine** (`syntha-engine` added to `syntha-ingestion`) for fee
   arithmetic and `MarketTerms`; the engine still imports nothing from ingestion and performs no
   I/O.
+
+### M9 — census months as engine data, and the discovery tooling (engineering)
+
+- **Census months join the normalized layer as hourly collections.** `make rebuild-normalized`
+  now also reads `raw/_census/*.json`: each census month becomes a collection `census-<month>`
+  (survivorship-free, with its coverage window) whose markets come from the saved listing pages,
+  whose bars are the census's hourly CLOB samples (`price_bars.source = prices_history_60`,
+  timestamps on the hour, staleness measured at the bar's last minute) and whose prints are the
+  census walks (the last ~8 days of each market). Candidate strategies and the S2 rule run
+  through the engine on these collections at `bar_interval_minutes = 60` — the same limit
+  orders, same-side liquidity and honesty layer — without a second, 1-minute fetch of every
+  month. Limits, on purpose: no bars before `end − 15 d` (lookbacks beyond that are null → no
+  signal), prints only in the last 8 days (earlier fills are `NO_PRINTS`, never invented),
+  `min_volume_asof` is meaningless on them. A market in both a collection and a census keeps
+  its 1-minute collection bars.
+- **Sampler cost for 2026 months.** Events are fetched in two stages: before allocation only
+  for markets without a `feeType` (category from tags — every 2025 market, few 2026 ones), and
+  after allocation for the sampled markets (sibling counts). The CLOB price phase runs on its
+  own token bucket (`--prices-rps 40`; documented limit 100/s) while Gamma and the Data API stay
+  at 20/s. `tools/research/census_months.sh` runs months back to back with fetch retries and a
+  double build per month.
+- **`universe.deadline_types`** (BY | ON | NONE, from `markets.deadline_type`) is the S2 rule's
+  universe filter; static, applied before anything runs.
+- **S1/S2 discovery tool** (`tools/research/s1_calibration.py`): per primary cell (category ×
+  fill-price bucket × offset) E[r] under CURRENT fees with the event/day cluster bootstrap
+  (wider = headline), fill rate (share of observations whose *mid* is in the bucket that also
+  filled), mid calibration, capacity at $1k/$10k, MDE@80%, monthly sign counts; BH at 10% FDR
+  with N = 660 from the register (untested cells count as p = 1); the pre-registered selection
+  rule; report with heatmaps, negative-space table and S2 test-1 contrasts. The S2 rule's DSL
+  (`research/studies/s2_deadline_decay/rule_deadline_decay_no_72h.json`) expresses "YES has not
+  decayed" on the traded NO token (`price_change_pct` over 7 days ≤ +10%), because features are
+  per token; noted as an approximation of the registered wording.
+- **Loader time bounds.** `load_dataset` now bounds its bar and print queries by the selected
+  markets' earliest open and latest close (± a day or two) so Timescale excludes chunks: a
+  6,147-market census month loaded in 418 s before and 53 s after (the S2 universe of 111 BY
+  markets: 73 s → 20 s). On a year-wide 1-minute collection the bounds exclude little and cost a
+  few seconds; the data volume dominates there. Per-token LATERAL lookups were tried and are
+  worse: each probes every chunk (~0.2 s per token).
+- **`bars_waited` on an expired limit order** counts from the bar the order first went live
+  (`Signal.first_due_k`); `due_k` moves while the order rests, and the trace used to say 1.
+- **Ultra-short markets are classed by the question's window, not only by `end − open`**
+  (`parse.question_window_minutes`): 5/15-minute crypto markets are listed days ahead and the
+  PRD's rule put them in the primary cells, where they produced a spurious +28% cell
+  (docs/DATA_NOTES.md, "M9 discovery, first pass"). Applied at census build time, so a
+  manifest's stratum can say `multi_day` while `census_markets.duration_class` says
+  `ultra_short`; the allocation caps of already-fetched months are not retroactively changed.
+- **`fill_first_10m` next to `fill_10m`.** The registered fill is the window VWAP of taker-BUY
+  prints at ≤ mid + 1 tick; it averages over dips in fast markets. The first qualifying print is
+  stored as a robustness fill and reported beside it; the selection rule still uses `fill_10m`
+  as registered, and any candidate whose two fills disagree is flagged in the report.
+- **Normalize streams prints.** With twelve census months in `raw/`, `trade_lines` held
+  ~60M print rows as one dict of COPY lines and the rebuild ran out of memory (it exited without
+  a word, twice). It now de-duplicates market by market, spools the lines to
+  `data/checkpoints/trade_prints.spool`, keeps only per-token timestamp arrays (`array('q')`),
+  and orders rows by (market, ts, key) — still deterministic, so the content hash still
+  identifies a build. `listing_market_objects` likewise keeps only the sampled market ids
+  rather than a month's whole listing.
+- **Bulk print load without secondary indexes.** The unique key and the (token, ts) index on
+  `trade_prints` are dropped before the COPY and recreated after it (inside the rebuild's
+  transaction); row-by-row index maintenance made the 68M-print load take three hours. The
+  migration test still sees the same schema.
+- **The data-quality report runs in a savepoint with no parallel workers.** The third full
+  rebuild (293M bars, 76M prints) loaded everything and then lost the whole transaction: the
+  `complement_divergence_prints` self-join ran with parallel workers whose dynamic shared memory
+  lives in Docker's 64 MB `/dev/shm`, PostgreSQL raised `DiskFull`, and the `try/except` around
+  the report could not save an already-aborted transaction. The report now runs inside
+  `conn.transaction()` (a savepoint) with `SET LOCAL max_parallel_workers_per_gather = 0`; a
+  failing report is logged and stored as `{"error": ...}` in the version's quality JSON, and
+  the load is kept.
+- **Disk incident during the fourth full rebuild (2026-09-16).** The rebuild's COPY filled the
+  host disk (the Docker VM image had grown to 250 GB): PostgreSQL's data directory remounted
+  read-only inside the VM, the quality report failed with `Read-only file system`, and the
+  rollback itself could not complete, which left the new relation files (the TRUNCATE'd tables'
+  and the new chunks' files, 126 GiB in 1,781 file nodes) orphaned on disk — owned by no row of
+  `pg_class`. After a Docker restart PostgreSQL recovered cleanly. Orphans are found by comparing
+  `base/<db>/` file nodes with `pg_relation_filenode(oid)` over all of `pg_class` while no other
+  backend has a transaction open, and removed by hand; `fstrim` inside the VM returns freed
+  blocks to the host. Lesson recorded here rather than automated: a rebuild must start with
+  free space of at least the new layer's size (about 120 GB for 14 census months at 60-minute
+  bars plus prints) *on top of* the old layer, because the old files live until the commit.
+  Truncating the disposable normalized tables before a rebuild halves the peak.
