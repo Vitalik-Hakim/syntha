@@ -1,10 +1,55 @@
 # S1b — resting-order return at taker-BUY prints (maker side of S1)
 
-**Status: discovery on D done (2026-09-16); five cells pass the registered rule, one of them
-with no loss event at all; the family as a whole is flat. No C1/C2 run has been made — the run
-stopped after D as instructed.** Registered as R-0769 (study) and R-0770…R-0945 (176 primary
-cells) before the run; `registration.yaml` records that the taker census on D motivated the
-family, so D is its discovery set only.
+**Status (2026-09-16): discovery on D done; all five rule-passers run on C1 and on the
+available C2 month (2026-01) under the registered confirmation criteria (Amendment 1,
+R-0946). Provisional verdicts until 2026-09 joins C2: one rejected, four underpowered. No
+cell is confirmed.** Registered as R-0769 (study) and R-0770…R-0945 (176 primary cells)
+before the run; `registration.yaml` records that the taker census on D motivated the family.
+
+## Confirmation (C1: 2026-06…08; C2: 2026-01; realistic = fill at the print price, conservative = one tick worse)
+
+| Cell | D | C1 (n, loss events, r, 90% CI) | C2 (n, loss events, r, 90% CI) | conservative C1 ∪ C2 | verdict |
+|---|---|---|---|---|---|
+| politics [0.20,0.35) −6h | +0.229, 23 loss events | 55 prints, 5, −0.181 (−0.59 to +0.31) | 102 prints, 4, +0.166 (−0.14 to +0.38) | +0.030 | **underpowered** |
+| crypto [0.03,0.10) −15m | +0.051, 6 | 1,689, 16, +0.031 (+0.008 to +0.048) **pass** | 832, 5, +0.031 (−0.011 to +0.058) **fail** | +0.020 | **rejected** |
+| politics [0.03,0.10) −1h | +0.046, 7 | 70, 1, +0.034 (−0.03 to +0.07) | 151, 0, +0.061 (+0.05 to +0.08) | +0.042 | **underpowered** |
+| weather [0.03,0.10) −1h | +0.039, 12 | 198, 4, +0.036 (+0.005 to +0.059) | 67, 3, +0.018 (−0.03 to +0.06) | +0.020 | **underpowered** |
+| politics [0.01,0.03) −1h | +0.020, 0 | 27, 0, +0.020 (+0.017 to +0.023) | 172, 0, +0.017 (+0.016 to +0.020) | +0.008 | **underpowered** |
+
+Every verdict is provisional: C2 has one month until 2026-09 resolves (`report/verdicts.md`
+says so on every row). Reading:
+
+- **The candidate did not survive contact with 2026.** politics [0.20,0.35) −6h has 55 prints on
+  C1 (19 events) at −18%, size-weighted −94% (one large losing print), and 102 prints on C2 at
+  +17% with four losing events. Neither set is decisive; the D effect (+23% on 674 prints) is
+  not contradicted, but nothing out of sample supports it either. The registration's
+  "confirmation" was the same measurement on months where the cell holds a few dozen prints.
+- **crypto [0.03,0.10) −15m** is the only cell with power out of sample: C1 passes (1,689
+  prints, 16 losing events, +3.1%, CI above zero), C2 fails (832 prints, 5 losing events, the
+  interval spans zero), and the conservative preset is +2.0% with its C1 interval touching
+  zero. Under the registered rule that is a rejection; on the numbers it is a +2–3% maker
+  edge that one tick of queue position eats. AS 30m is +0.03 on both sets: the price falls
+  after these fills, the maker is not picked off.
+- **The three thin cells** have 0–4 losing events on both sets: the "no tail observed" flag
+  the registration template now carries is exactly what confirmation showed.
+- The 2026 census months have far fewer non-ultra_short taker-BUY prints than 2025 H2 (C1:
+  203,555 outside ultra_short in three months; D's ten months: 334,342) — the census's print
+  walk truncation (docs/DATA_NOTES.md, "Census months") thins the confirmation sets.
+
+## Splits on D (report regenerated with event-weighted returns, year and deadline-type splits)
+
+| Cell | event-weighted | 2025 H2 (n) | 2026 (n) | BY (n) | ON (n) | NONE (n) |
+|---|---|---|---|---|---|---|
+| politics [0.20,0.35) −6h | +0.115 | +0.313 (110) | +0.213 (564) | −1.000 (1) | +0.003 (18) | +0.237 (655) |
+| crypto [0.03,0.10) −15m | +0.039 | +0.051 (629) | +0.052 (395) | −1.000 (1) | +0.053 (740) | +0.049 (283) |
+| politics [0.03,0.10) −1h | +0.012 | +0.070 (415) | +0.021 (401) | +0.086 (80) | −0.330 (11) | +0.047 (725) |
+| weather [0.03,0.10) −1h | +0.020 | −0.023 (110) | +0.049 (637) | +0.035 (1) | +0.039 (744) | +0.046 (2) |
+| politics [0.01,0.03) −1h | +0.022 | +0.022 (310) | +0.019 (253) | +0.029 (2) | +0.018 (6) | +0.020 (555) |
+
+Pooled primary family: BY +0.047 (1,355 prints), ON +0.005 (41,979), NONE +0.020 (17,797);
+2025 H2 +0.004 (25,149), 2026 Feb–May +0.015 (35,982); event-weighted +0.017 overall. The
+event-weighted return of the politics candidate (+0.115) is half its print-weighted one: a
+few events with many prints carry it.
 
 ## What was measured
 
@@ -78,14 +123,15 @@ capacity is $133/month at $1,000 with 10% of flow.
 - ultra_short markets: 9.99M prints, r_maker −0.032 equal-weight, adverse selection −0.198 at
   30 minutes — the maker on the 5/15-minute crypto series is picked off. Reported, never pooled.
 
-## Next step (not taken)
+## Next step
 
-C1 (2026-06…08) and C2 (2026-01 now; 2026-09/10 when resolved) with the same measurement,
-per the registration's confirmation rule, for cell 1 and — with their loss-event counts
-stated — cells 2–4. That is a decision to make, not a run to start.
+Re-run `confirm --set C2 --months 2026-01 2026-09` and `verdict` once 2026-09 is in the
+census; the verdicts stop being provisional then. Nothing here is a reason to run anything
+else.
 
 ## Files
 
 - `report/report.md`, `report/resting.parquet` (660 cells: 176 primary, 484 secondary),
-  `report/summary.json`.
+  `report/summary.json`; `report/confirmation_C1.*`, `report/confirmation_C2.*` (both
+  presets, splits, losing-event counts), `report/verdicts.*`.
 - Per-month fill caches in `data/checkpoints/s1b/<month>.parquet` (disposable).

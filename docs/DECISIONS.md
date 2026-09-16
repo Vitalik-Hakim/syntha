@@ -623,3 +623,22 @@ row and noting the date.
   free space of at least the new layer's size (about 120 GB for 14 census months at 60-minute
   bars plus prints) *on top of* the old layer, because the old files live until the commit.
   Truncating the disposable normalized tables before a rebuild halves the peak.
+- **Recorder operations (2026-09-16).** Three flags on `python -m syntha_recorder`: a rolling
+  `politics/final_24h` slot (up to 6 politics markets scheduled to end within 24 hours, any tier
+  with volume, refilled hourly; S1b's candidate cell lives in the last hours before the
+  deadline and the stratified list rarely holds such a market), `--retention-days 30`
+  (`drop_chunks` on both order-book hypertables at each refresh) and `--disk-cap-gb 20` (the
+  hypertables plus `raw/ws_market`; over the cap the oldest chunk goes, oldest first, since the
+  tables are re-derivable from raw; if the raw frames alone exceed the cap the recorder stops
+  rather than delete anything under `data/raw`). Decisions are pure functions
+  (`syntha_recorder.disk.decide`, `watchlist.plan`) with tests.
+- **S1b confirmation criteria are a dated amendment, registered as a row.** The registration
+  file says it is not edited after data is seen; the confirmation criteria were written after
+  the D run and before any C1/C2 print was loaded, so they are appended as "Amendment 1" with
+  that statement and registered as `s1b_resting_order:confirmation` (R-0946). Future
+  registrations write their confirmation criteria up front.
+- **Minimum-losing-events criterion in the registration template.** After S1b's zero-loss cell
+  passed its rule with a degenerate interval, every later registration carries
+  `min_losing_events: 5` (docs/RESEARCH_PROTOCOL.md). Not applied retroactively to S1b's
+  selection rule; its report flags such cells instead, and its confirmation criteria require
+  five losing events for a set to be decisive.

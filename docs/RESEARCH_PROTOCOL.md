@@ -286,3 +286,20 @@ size-weighted); five cells pass the registered rule, of which one has no loss ev
 rest on 6–12; one (politics [0.20,0.35) −6h) is a candidate for C1/C2. Not run further
 (research/studies/s1b_resting_order/README.md). S3 has a draft registration
 (research/studies/s3_wallets/registration.yaml), not registered and not run.
+
+### Registration template additions (from S1b, 2026-09-16)
+
+Every registration written after this date carries, in its `selection_rule` and its
+`confirmation_rule`, a **minimum-losing-events criterion**:
+
+```yaml
+min_losing_events: 5   # distinct cluster-events on the losing side of the estimand
+```
+
+A cell (or rule, wallet variant, scan variant) whose losing side has fewer than
+`min_losing_events` cluster-events is reported as "no tail observed" with its loss-event count
+and is never selected or confirmed, whatever its interval says. Reason: a cluster bootstrap
+resamples the clusters it saw; with no (or almost no) losing clusters its interval is the size
+of the coupon, not a statement about the tail. S1b's politics [0.01,0.03) −1h cell (563 prints,
+66 events, zero paid out, CI +0.019 to +0.022) is the worked example. The criterion is not
+applied retroactively to S1b's own selection rule (its report flags such cells instead).

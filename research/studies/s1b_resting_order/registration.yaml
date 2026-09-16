@@ -100,3 +100,35 @@ outputs:
   - research/studies/s1b_resting_order/report/resting.parquet (every primary and secondary cell)
   - research/studies/s1b_resting_order/report/report.md (candidates or "none", negative space with MDE, adverse-selection table, rebate sensitivity, register N)
   - research/studies/s1b_resting_order/report/summary.json
+
+# ---------------------------------------------------------------------------------------------
+# Amendment 1 — confirmation criteria. Added 2026-09-16 after the D discovery run (commit
+# e56cd48) and before any C1 or C2 print was loaded for this study. Registered as its own row
+# (family s1b_resting_order:confirmation) so the register accounts for it. Nothing above changed.
+confirmation_criteria:
+  candidates: >
+    The five cells in report/summary.json as written by the D run (commit e56cd48), in that
+    order, none dropped or added — including politics [0.01,0.03) −1h, which the report flags
+    "no tail observed"; it is carried so the flag can be tested out of sample.
+  presets:
+    realistic: fill at the taker's print price p (the maker was at the front of the queue) — the deciding preset
+    conservative: fill one tick worse for the maker, q = p − 0.01 (queue position costs a tick) — the robustness arm
+    rebate: 0 in both; the 25% sensitivity is reported
+  sets:
+    C1: [2026-06, 2026-07, 2026-08]
+    C2: [2026-01]   # 2026-09 (and 2026-10) join when their markets resolve; the verdict is recomputed then and is provisional until then
+  order: C1 first, its table written, then C2; no parameter changes between sets
+  per_set_rule: |
+    On the realistic preset, per set:
+    - decisive: n >= 300 prints and >= 5 losing events (distinct events in which the token paid out);
+    - pass: decisive, wider cluster 90% CI above zero, r_maker positive in a majority of the set's
+      months, capacity >= $50/month at $1,000 with 10% of flow;
+    - fail: decisive and not pass;
+    - underpowered: not decisive (MDE reported).
+    Losing-event counts are reported per set and per preset.
+  verdict: |
+    confirmed: pass on C1 and on C2, and the conservative preset's pooled C1 ∪ C2 return > 0;
+    rejected: fail on C1 or on C2, or conservative pooled C1 ∪ C2 <= 0 while decisive;
+    promising-unconfirmed: pass on C1 and C2 underpowered;
+    underpowered: C1 underpowered.
+  reported_alongside: event-weighted return, 2025 H2 / 2026 split, deadline-type (BY / ON / NONE) split, adverse selection at 5 and 30 minutes, size-weighted return

@@ -1,0 +1,86 @@
+{
+ "rows": [
+  {
+   "cell": {
+    "category": "politics",
+    "bucket": "[0.20,0.35)",
+    "offset": "-6h"
+   },
+   "C1": "underpowered",
+   "C2": "underpowered",
+   "loss_events": {
+    "C1": 5,
+    "C2": 4
+   },
+   "conservative_pooled": 0.029672491180489532,
+   "verdict": "underpowered",
+   "provisional": true
+  },
+  {
+   "cell": {
+    "category": "crypto",
+    "bucket": "[0.03,0.10)",
+    "offset": "-15m"
+   },
+   "C1": "pass",
+   "C2": "fail",
+   "loss_events": {
+    "C1": 16,
+    "C2": 5
+   },
+   "conservative_pooled": 0.019828419120009048,
+   "verdict": "rejected",
+   "provisional": true
+  },
+  {
+   "cell": {
+    "category": "politics",
+    "bucket": "[0.03,0.10)",
+    "offset": "-1h"
+   },
+   "C1": "underpowered",
+   "C2": "underpowered",
+   "loss_events": {
+    "C1": 1,
+    "C2": 0
+   },
+   "conservative_pooled": 0.04161610498886456,
+   "verdict": "underpowered",
+   "provisional": true
+  },
+  {
+   "cell": {
+    "category": "weather",
+    "bucket": "[0.03,0.10)",
+    "offset": "-1h"
+   },
+   "C1": "underpowered",
+   "C2": "underpowered",
+   "loss_events": {
+    "C1": 4,
+    "C2": 3
+   },
+   "conservative_pooled": 0.020388386520250795,
+   "verdict": "underpowered",
+   "provisional": true
+  },
+  {
+   "cell": {
+    "category": "politics",
+    "bucket": "[0.01,0.03)",
+    "offset": "-1h"
+   },
+   "C1": "underpowered",
+   "C2": "underpowered",
+   "loss_events": {
+    "C1": 0,
+    "C2": 0
+   },
+   "conservative_pooled": 0.007939707890710765,
+   "verdict": "underpowered",
+   "provisional": true
+  }
+ ],
+ "c2_complete": false,
+ "generated_at": "2026-09-16T17:55:40+00:00"
+}

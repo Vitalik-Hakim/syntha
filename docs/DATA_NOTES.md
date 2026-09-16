@@ -816,6 +816,35 @@ print); Docker's 64 MB /dev/shm forbids parallel workers on the 76M-print joins;
 query needs the month's time bounds for chunk exclusion (a full scan took > 45 min per
 month); per-month fills are cached under data/checkpoints/s1b/.
 
+### Recorder restarted with the final-24h slot, retention and a disk cap (2026-09-16 17:20 UTC)
+
+Started detached (`data/recorder.log`) with `--final-24h-slots 6 --retention-days 30
+--disk-cap-gb 20`. First refresh: 21 markets / 42 tokens, no `politics/final_24h` entry. Live probe the same
+hour: of the 1,000 open markets whose `endDate` falls in the next 24 hours (Gamma
+`end_date_min/max` on the open listing works, 10 pages), none carries `feeType` politics and
+the embedded events carry no tags; the only politics-like ones are two `no_fee` geopolitics
+day-markets. Politics markets in their final day are sparse (S1b's candidate cell had 138
+markets in ten months); the slot fills when one appears. The refresh now also scans the
+end-date-filtered listing (three pages) so a quiet politics market ending tomorrow is not
+missed by the volume-ordered top 1,000. Thin strata stay empty for the documented reason (the
+top-1,000 listing bottoms out near $4k/day). Growth per day is to be read from
+`make recorder-coverage` after 24 hours (from 2026-09-17 17:20 UTC). Early read at 40
+minutes (not the confirmation): 294,181 rows, 3,523 trades, 14.6 MB of raw frames for 42
+tokens, hypertables 0.15 GB before compression.
+
+### S1b confirmation on C1 and C2 (2026-01): one rejected, four underpowered, all provisional (2026-09-16)
+
+Confirmation criteria written as a dated amendment after the D run and registered (R-0946);
+all five D rule-passers run on C1 (2026-06…08) then C2 (2026-01), realistic (fill at the
+print price) and conservative (one tick worse), losing-event counts per set. Verdicts:
+crypto [0.03,0.10) −15m rejected (C1 pass on 1,689 prints / 16 losing events, C2 fail on 832 /
+5); the other four underpowered (27–198 prints per set, 0–5 losing events). Provisional until
+2026-09 joins C2. Report additions: event-weighted return, 2025 H2 / 2026 and BY / ON / NONE
+splits on every cell (research/studies/s1b_resting_order/README.md). Method: the 2026 census
+months hold up to 65M 1-minute bars each, so the marks now fetch only the bars at the fills'
+mark minutes through a temp table (the first C1 attempt stalled at 27 GB of swap), and the
+bars join hashes the fills' side.
+
 ### The three M9 decisions (product owner, 2026-09-15)
 
 - **Capacity denominator = the collection's coverage window** (`Dataset.coverage`, from the

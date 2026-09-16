@@ -21,7 +21,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -37,6 +37,9 @@ THIN_MAX_24H = 2_000.0
 THIN_MIN_24H = 100.0  # below this there is nothing to record
 LISTING_PAGES = 10  # 1,000 markets by 24h volume, down to roughly $4k/day (probe 2026-09-14)
 STATUS_BATCH = 20
+FINAL_24H_CATEGORY = "politics"
+FINAL_24H_SLOTS = 6  # rolling slot: politics markets inside their final 24 hours (S1b cell 1)
+FINAL_24H_STRATUM = f"{FINAL_24H_CATEGORY}/final_24h"
 
 _FEE_SUFFIX = re.compile(r"(_fees)?(_v\d+)?$")
 
@@ -64,10 +67,25 @@ class Candidate:
     tier: str | None
     volume_24h: float
     open: bool
+    end_ts: datetime | None = None
 
     @property
     def stratum(self) -> str:
         return f"{self.category}/{self.structure}/{self.tier}"
+
+    def in_final_24h(self, now: datetime) -> bool:
+        """Scheduled to end within the next 24 hours (and not yet past its end)."""
+        return self.end_ts is not None and now < self.end_ts <= now + timedelta(hours=24)
+
+
+def _end_ts(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
 
 
 def classify(market: dict[str, Any]) -> Candidate | None:
@@ -86,6 +104,7 @@ def classify(market: dict[str, Any]) -> Candidate | None:
         tier=tier_of(volume),
         volume_24h=volume,
         open=bool(market.get("acceptingOrders", True)) and not bool(market.get("closed")),
+        end_ts=_end_ts(market.get("endDate")),
     )
 
 
@@ -102,9 +121,14 @@ def plan(
     *,
     target: int = TARGET_PER_STRATUM,
     categories: tuple[str, ...] = DEFAULT_CATEGORIES,
+    final_24h_slots: int = 0,
+    now: datetime | None = None,
 ) -> Plan:
     """Retire watched markets that closed; fill every stratum below `target` from the most
-    liquid open candidates not yet watched. Pure: no I/O, so it is testable."""
+    liquid open candidates not yet watched; then fill the rolling `politics/final_24h` slot
+    (markets of that category scheduled to end within 24 hours, any tier with volume) up to
+    `final_24h_slots`. Pure: no I/O, so it is testable."""
+    now = now or datetime.now(UTC)
     remove = [cid for cid in sorted(active) if not still_open.get(cid, True)]
     kept: dict[str, int] = {}
     for cid, stratum in active.items():
@@ -126,7 +150,42 @@ def plan(
                     if c.stratum == stratum and c.condition_id not in active:
                         add.append(c)
                         need -= 1
+    need = final_24h_slots - kept.get(FINAL_24H_STRATUM, 0)
+    taken = {c.condition_id for c in add}
+    for c in sorted(candidates, key=lambda c: -c.volume_24h):
+        if need <= 0:
+            break
+        if (
+            c.open
+            and c.category == FINAL_24H_CATEGORY
+            and c.volume_24h >= THIN_MIN_24H
+            and c.in_final_24h(now)
+            and c.condition_id not in active
+            and c.condition_id not in taken
+        ):
+            add.append(FinalSlot(c))
+            taken.add(c.condition_id)
+            need -= 1
     return Plan(add, remove)
+
+
+class FinalSlot(Candidate):
+    """A candidate watched through the rolling final-24h slot: its stratum names the slot."""
+
+    def __init__(self, c: Candidate) -> None:
+        object.__setattr__(self, "condition_id", c.condition_id)
+        object.__setattr__(self, "event_id", c.event_id)
+        object.__setattr__(self, "tokens", c.tokens)
+        object.__setattr__(self, "category", c.category)
+        object.__setattr__(self, "structure", c.structure)
+        object.__setattr__(self, "tier", c.tier)
+        object.__setattr__(self, "volume_24h", c.volume_24h)
+        object.__setattr__(self, "open", c.open)
+        object.__setattr__(self, "end_ts", c.end_ts)
+
+    @property
+    def stratum(self) -> str:
+        return FINAL_24H_STRATUM
 
 
 # ------------------------------------------------------------------ I/O
@@ -144,6 +203,36 @@ def fetch_markets(client: httpx.Client, pages: int = LISTING_PAGES) -> list[dict
                 "offset": page * 100,
                 "order": "volume24hr",
                 "ascending": "false",
+            },
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        out.extend(rows)
+        if len(rows) < 100:
+            break
+    return out
+
+
+def fetch_ending_soon(
+    client: httpx.Client, now: datetime, hours: int = 24, pages: int = 3
+) -> list[dict[str, Any]]:
+    """Open markets whose scheduled end falls within `hours` (Gamma `end_date_min/max`, verified
+    on the closed listing in docs/DATA_NOTES.md "M9 prep" and live on the open listing
+    2026-09-16), most traded first — the pool for the final-24h slot, which the volume-ordered
+    top-1,000 listing would miss for a quiet market."""
+    out: list[dict[str, Any]] = []
+    for page in range(pages):
+        resp = client.get(
+            GAMMA_MARKETS,
+            params={
+                "closed": "false",
+                "active": "true",
+                "limit": 100,
+                "offset": page * 100,
+                "order": "volume24hr",
+                "ascending": "false",
+                "end_date_min": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "end_date_max": (now + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ"),
             },
         )
         resp.raise_for_status()
@@ -218,15 +307,31 @@ def refresh(
     *,
     target: int = TARGET_PER_STRATUM,
     categories: tuple[str, ...] = DEFAULT_CATEGORIES,
+    final_24h_slots: int = FINAL_24H_SLOTS,
     now: datetime | None = None,
 ) -> set[str]:
-    """One refill cycle: retire closed markets, fill strata, return the token ids to record."""
+    """One refill cycle: retire closed markets, fill strata and the final-24h slot, return the
+    token ids to record."""
     now = now or datetime.now(UTC)
     with psycopg.connect(database_url) as conn, httpx.Client(timeout=30) as client:
         active, _ = load_active(conn)
-        candidates = [c for c in (classify(m) for m in fetch_markets(client)) if c is not None]
+        listing = fetch_markets(client)
+        if final_24h_slots > 0:
+            seen = {m.get("conditionId") for m in listing}
+            listing += [
+                m for m in fetch_ending_soon(client, now) if m.get("conditionId") not in seen
+            ]
+        candidates = [c for c in (classify(m) for m in listing) if c is not None]
         status = fetch_status(client, sorted(active)) if active else {}
-        p = plan(active, candidates, status, target=target, categories=categories)
+        p = plan(
+            active,
+            candidates,
+            status,
+            target=target,
+            categories=categories,
+            final_24h_slots=final_24h_slots,
+            now=now,
+        )
         apply(conn, p, now, "stratum_fill")
         strata, tokens = load_active(conn)
         log.info(

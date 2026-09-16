@@ -10,6 +10,9 @@ where one exists, else the next print. Primary family: print price < 0.35 at off
 
 Usage:
   uv run python tools/research/s1b_resting_order.py discovery --months 2025-07 ... 2026-05
+  uv run python tools/research/s1b_resting_order.py confirm --set C1 --months 2026-06 2026-07 2026-08
+  uv run python tools/research/s1b_resting_order.py confirm --set C2 --months 2026-01
+  uv run python tools/research/s1b_resting_order.py verdict
 """
 
 from __future__ import annotations
@@ -59,6 +62,11 @@ MIN_CAPACITY = 50.0
 MAX_CANDIDATES = 8
 FDR = 0.10
 SEED = 20260916
+MIN_WIN_EVENTS = 5  # a maker's loss is the token paying out; fewer events than this = no tail
+DEADLINE_TYPES = ("BY", "ON", "NONE")
+# confirmation presets (registration.yaml, confirmation_criteria): the maker's fill price
+PRESETS: dict[str, float] = {"realistic": 0.0, "conservative": 0.01}
+CONFIRM_MIN_N = 300
 
 FILLS_SQL = """
 WITH obs AS (
@@ -85,15 +93,18 @@ FROM trade_prints p
 WHERE p.clob_token_id IN (SELECT clob_token_id FROM census_observations WHERE census_id = %(census_id)s)
   AND p.ts >= %(lo)s AND p.ts < %(hi)s
 """
+# only the 1-minute bars at the fills' mark minutes (a month can hold 65M 1-minute bars)
 BARS_SQL = """
 SELECT b.clob_token_id, b.ts, b.price::float8, b.staleness_minutes
-FROM price_bars b
-WHERE b.clob_token_id IN (SELECT clob_token_id FROM census_observations WHERE census_id = %(census_id)s)
-  AND b.source = 'prices_history' AND b.ts >= %(lo)s AND b.ts < %(hi)s
+FROM price_bars b JOIN mark_minutes m ON m.clob_token_id = b.clob_token_id AND m.ts = b.ts
+WHERE b.source = 'prices_history' AND b.ts >= %(lo)s AND b.ts < %(hi)s
 """
 BOUNDS_SQL = """
 SELECT min(ts), max(ts) + interval '10 minutes' + interval '30 minutes' + interval '24 hours'
 FROM census_observations WHERE census_id = %(census_id)s
+"""
+DEADLINE_SQL = """
+SELECT condition_id, coalesce(deadline_type, 'NONE') FROM census_markets WHERE census_id = %(census_id)s
 """
 
 TS = pl.Datetime("us", "UTC")
@@ -145,16 +156,17 @@ def _marks(fills: pl.DataFrame, prints: pl.DataFrame, bars: pl.DataFrame) -> pl.
             )
             .select("_i", f"next{d}")
         )
-        bar = (
-            with_key.select("_i", "clob_token_id", f"{key}_bar")
-            .join(
-                bars.rename(
-                    {"ts": f"{key}_bar", "price": f"bar{d}", "staleness_minutes": f"stale{d}"}
-                ),
-                on=["clob_token_id", f"{key}_bar"],
-                how="left",
-            )
-            .select("_i", f"bar{d}", f"stale{d}")
+        keys = with_key.select("_i", "clob_token_id", f"{key}_bar")
+        # hash the small side (the fills' mark minutes), stream the bars (tens of millions)
+        hits = bars.rename(
+            {"ts": f"{key}_bar", "price": f"bar{d}", "staleness_minutes": f"stale{d}"}
+        ).join(
+            keys.select("clob_token_id", f"{key}_bar").unique(),
+            on=["clob_token_id", f"{key}_bar"],
+            how="inner",
+        )
+        bar = keys.join(hits, on=["clob_token_id", f"{key}_bar"], how="left").select(
+            "_i", f"bar{d}", f"stale{d}"
         )
         out = out.join(nxt, on="_i", how="left").join(bar, on="_i", how="left")
     return out.drop("_i")
@@ -173,35 +185,71 @@ def current_fee_terms_by_category() -> dict[str, tuple[float, int]]:
     return out
 
 
+def _bars_at_marks(
+    conn: psycopg.Connection[Any], fills: pl.DataFrame, params: dict[str, Any]
+) -> list[tuple[Any, ...]]:
+    """The 1-minute bars at every fill's mark minutes, via a temp table of those minutes."""
+    minutes = pl.concat(
+        [
+            fills.select(
+                "clob_token_id",
+                (pl.col("t_p").dt.truncate("1m") + pl.duration(minutes=d)).alias("ts"),
+            )
+            for d in MARKS_MIN
+        ]
+    ).unique()
+    with conn.transaction():
+        conn.execute("DROP TABLE IF EXISTS mark_minutes")
+        conn.execute("CREATE TEMP TABLE mark_minutes (clob_token_id text, ts timestamptz)")
+        with conn.cursor() as cur, cur.copy("COPY mark_minutes FROM STDIN") as cp:
+            for tok, ts in minutes.iter_rows():
+                cp.write_row((tok, ts))
+        conn.execute("CREATE INDEX ON mark_minutes (clob_token_id, ts)")
+        rows = conn.execute(BARS_SQL, params).fetchall()
+        conn.execute("DROP TABLE mark_minutes")
+    return rows
+
+
 def load_month(conn: psycopg.Connection[Any], month: str) -> pl.DataFrame:
-    """One month's fills with their marks; cached as parquet so a rerun does not requery."""
+    """One month's fills with their marks; cached as parquet so a rerun does not requery.
+    `deadline_type` is joined from census_markets on every load (it is not in the cache)."""
     CACHE.mkdir(parents=True, exist_ok=True)
     cached = CACHE / f"{month}.parquet"
+    params: dict[str, Any] = {"census_id": f"census-{month}"}
     if cached.exists():
         df = pl.read_parquet(cached)
         print(f"  census-{month}: {df.height:,} fills (cached)", flush=True)
-        return df
-    params: dict[str, Any] = {"census_id": f"census-{month}"}
-    lo, hi = conn.execute(BOUNDS_SQL, params).fetchone()  # type: ignore[misc]
-    params |= {"lo": lo, "hi": hi}
-    fills = pl.DataFrame(
-        conn.execute(FILLS_SQL, params).fetchall(), schema=FILL_SCHEMA, orient="row"
+    else:
+        lo, hi = conn.execute(BOUNDS_SQL, params).fetchone()  # type: ignore[misc]
+        params |= {"lo": lo, "hi": hi}
+        fills = pl.DataFrame(
+            conn.execute(FILLS_SQL, params).fetchall(), schema=FILL_SCHEMA, orient="row"
+        )
+        prints = pl.DataFrame(
+            conn.execute(PRINTS_SQL, params).fetchall(), schema=PRINT_SCHEMA, orient="row"
+        )
+        bars = pl.DataFrame(_bars_at_marks(conn, fills, params), schema=BAR_SCHEMA, orient="row")
+        df = _marks(fills, prints, bars).drop("print_id")
+        df.write_parquet(cached)
+        print(
+            f"  census-{month}: {fills.height:,} taker-BUY prints in fill windows "
+            f"({prints.height:,} prints and {bars.height:,} 1-minute bars for the marks)",
+            flush=True,
+        )
+    deadlines = pl.DataFrame(
+        conn.execute(DEADLINE_SQL, params).fetchall(),
+        schema={"condition_id": pl.Utf8, "deadline_type": pl.Utf8},
+        orient="row",
     )
-    prints = pl.DataFrame(
-        conn.execute(PRINTS_SQL, params).fetchall(), schema=PRINT_SCHEMA, orient="row"
+    if "deadline_type" in df.columns:
+        df = df.drop("deadline_type")
+    return df.join(deadlines, on="condition_id", how="left").with_columns(
+        pl.col("deadline_type").fill_null("NONE")
     )
-    bars = pl.DataFrame(conn.execute(BARS_SQL, params).fetchall(), schema=BAR_SCHEMA, orient="row")
-    df = _marks(fills, prints, bars).drop("print_id")
-    df.write_parquet(cached)
-    print(
-        f"  census-{month}: {fills.height:,} taker-BUY prints in fill windows "
-        f"({prints.height:,} prints and {bars.height:,} 1-minute bars for the marks)",
-        flush=True,
-    )
-    return df
 
 
 def load(months: list[str]) -> pl.DataFrame:
+    """The months' fills with the columns every preset shares; `derive` adds the returns."""
     frames = []
     with psycopg.connect(_url()) as conn:
         conn.execute("SET statement_timeout = 0")
@@ -228,25 +276,35 @@ def load(months: list[str]) -> pl.DataFrame:
         .then(pl.col("bar30"))
         .otherwise(pl.col("next30"))
     )
+    return df.filter(
+        pl.col("payout").is_not_null() & (pl.col("p") > 0.01) & (pl.col("p") < 0.99)
+    ).with_columns(
+        pl.col("census_id").str.replace("census-", "").alias("month"),
+        pl.col("t_p").dt.strftime("%Y-%m-%d").alias("day"),
+        _bucket_expr("p").alias("bucket"),  # cell membership is by the taker's print price
+        fee_expr.alias("taker_fee_per_share"),
+        mark5.alias("mark5"),
+        mark30.alias("mark30"),
+        (pl.col("bar5").is_not_null() & (pl.col("stale5") <= 5)).alias("mark5_from_bar"),
+    )
+
+
+def derive(df: pl.DataFrame, shift: float = 0.0) -> pl.DataFrame:
+    """Returns at the maker's fill price q = p − shift (shift 0: realistic, the print price;
+    0.01: conservative, one tick worse for the maker)."""
+    q = (pl.col("p") - shift).clip(0.005, 0.995)
     return (
-        df.filter(pl.col("payout").is_not_null() & (pl.col("p") > 0.01) & (pl.col("p") < 0.99))
+        df.with_columns(q.alias("q"))
         .with_columns(
-            pl.col("census_id").str.replace("census-", "").alias("month"),
-            pl.col("t_p").dt.strftime("%Y-%m-%d").alias("day"),
-            _bucket_expr("p").alias("bucket"),
-            fee_expr.alias("taker_fee_per_share"),
-            mark5.alias("mark5"),
-            mark30.alias("mark30"),
-            ((pl.col("p") - pl.col("payout")) / (1 - pl.col("p"))).alias("r"),
-            ((1 - pl.col("p")) * pl.col("size")).alias("maker_dollars"),
+            ((pl.col("q") - pl.col("payout")) / (1 - pl.col("q"))).alias("r"),
+            ((1 - pl.col("q")) * pl.col("size")).alias("maker_dollars"),
+            ((pl.col("q") - pl.col("mark5")) / (1 - pl.col("q"))).alias("as5"),
+            ((pl.col("q") - pl.col("mark30")) / (1 - pl.col("q"))).alias("as30"),
         )
         .with_columns(
-            (pl.col("r") + REBATE * pl.col("taker_fee_per_share") / (1 - pl.col("p"))).alias(
+            (pl.col("r") + REBATE * pl.col("taker_fee_per_share") / (1 - pl.col("q"))).alias(
                 "r_rebate"
             ),
-            ((pl.col("p") - pl.col("mark5")) / (1 - pl.col("p"))).alias("as5"),
-            ((pl.col("p") - pl.col("mark30")) / (1 - pl.col("p"))).alias("as30"),
-            (pl.col("bar5").is_not_null() & (pl.col("stale5") <= 5)).alias("mark5_from_bar"),
         )
     )
 
@@ -255,10 +313,124 @@ def _mean(s: pl.Series) -> float | None:
     return float(s.mean()) if s.len() and s.null_count() < s.len() else None
 
 
+EMPTY_STATS: dict[str, Any] = {
+    k: None
+    for k in (
+        "r_maker",
+        "ci_lo",
+        "ci_hi",
+        "se",
+        "cluster_key",
+        "p_one_sided",
+        "mde_80",
+        "r_size_weighted",
+        "r_event_weighted",
+        "r_rebate",
+        "as5",
+        "as30",
+        "as5_coverage",
+        "as30_coverage",
+        "mark5_bar_share",
+        "mean_p",
+        "r_2025h2",
+        "r_2026",
+        "r_BY",
+        "r_ON",
+        "r_NONE",
+    )
+} | {
+    "pos_months": 0,
+    "seen_months": 0,
+    "pos_2025h2": 0,
+    "pos_2026": 0,
+    "capacity_1000": 0.0,
+    "flow_per_month": 0.0,
+    "n_2025h2": 0,
+    "n_2026": 0,
+    "n_BY": 0,
+    "n_ON": 0,
+    "n_NONE": 0,
+}
+
+
+def cell_stats(cell: pl.DataFrame, months: list[str], resamples: int, seed: int) -> dict[str, Any]:
+    """Every statistic the report shows for one set of prints (a cell, or a candidate on a
+    confirmation set): headline cluster CI, weightings, adverse selection, month signs,
+    capacity, and the year / deadline-type splits."""
+    n = cell.height
+    n_months = max(len(months), 1)
+    wins = cell.filter(pl.col("payout") >= 0.5)
+    row: dict[str, Any] = {
+        "n": n,
+        "n_events": int(cell["event_id"].n_unique()) if n else 0,
+        "n_markets": int(cell["condition_id"].n_unique()) if n else 0,
+        # the maker's loss events: prints whose token paid out (r = −1)
+        "n_wins": wins.height,
+        "n_win_events": int(wins["event_id"].n_unique()) if wins.height else 0,
+    }
+    if not n:
+        return row | EMPTY_STATS
+    h = headline(
+        cell["r"].to_numpy(),
+        cell["event_id"].to_numpy(),
+        cell["day"].to_numpy(),
+        resamples,
+        seed,
+    )
+    w = cell["maker_dollars"].to_numpy()
+    monthly = cell.group_by("month").agg(pl.col("r").mean().alias("m"))
+    signs = {r["month"]: r["m"] > 0 for r in monthly.iter_rows(named=True)}
+    windows = cell.group_by(["clob_token_id", "offset", "t0"]).agg(
+        pl.col("maker_dollars").sum().alias("flow")
+    )
+    capacity = float(
+        np.minimum(SIZING_PCT * 1_000, PARTICIPATION * windows["flow"].to_numpy()).sum() / n_months
+    )
+    by_event = cell.group_by("event_id").agg(pl.col("r").mean().alias("m"))
+    y2025 = cell.filter(pl.col("month").is_in(MONTHS_2025H2))
+    y2026 = cell.filter(pl.col("month").is_in(MONTHS_2026))
+    row.update(
+        {
+            "r_maker": h["mean"],
+            "ci_lo": h["ci90"][0],
+            "ci_hi": h["ci90"][1],
+            "se": h["se"],
+            "cluster_key": h["key"],
+            "p_one_sided": h["p_one_sided"],
+            "mde_80": MDE_MULTIPLIER * h["se"],
+            "r_size_weighted": float(np.average(cell["r"].to_numpy(), weights=w))
+            if w.sum() > 0
+            else None,
+            "r_event_weighted": _mean(by_event["m"]),
+            "r_rebate": _mean(cell["r_rebate"]),
+            "as5": _mean(cell["as5"]),
+            "as30": _mean(cell["as30"]),
+            "as5_coverage": 1 - cell["as5"].null_count() / n,
+            "as30_coverage": 1 - cell["as30"].null_count() / n,
+            "mark5_bar_share": float(cell["mark5_from_bar"].mean()),
+            "pos_months": sum(1 for m in months if signs.get(m)),
+            "seen_months": sum(1 for m in months if m in signs),
+            "pos_2025h2": sum(1 for m in MONTHS_2025H2 if signs.get(m)),
+            "pos_2026": sum(1 for m in MONTHS_2026 if signs.get(m)),
+            "capacity_1000": capacity,
+            "mean_p": float(cell["p"].mean()),
+            "flow_per_month": float(cell["maker_dollars"].sum() / n_months),
+            "r_2025h2": _mean(y2025["r"]),
+            "n_2025h2": y2025.height,
+            "r_2026": _mean(y2026["r"]),
+            "n_2026": y2026.height,
+        }
+    )
+    for dt in DEADLINE_TYPES:
+        part = cell.filter(pl.col("deadline_type") == dt)
+        row[f"r_{dt}"] = _mean(part["r"])
+        row[f"n_{dt}"] = part.height
+    return row
+
+
 def cell_table(df: pl.DataFrame, months: list[str], resamples: int) -> pl.DataFrame:
     primary = df.filter(pl.col("duration_class") != "ultra_short")
     rows: list[dict[str, Any]] = []
-    n_months = max(len(months), 1)
     for ci, category in enumerate(CATEGORIES):
         for bi, (bucket, _, _) in enumerate(BUCKETS):
             for oi, offset in enumerate(OFFSETS):
@@ -267,104 +439,17 @@ def cell_table(df: pl.DataFrame, months: list[str], resamples: int) -> pl.DataFr
                     & (pl.col("bucket") == bucket)
                     & (pl.col("offset") == offset)
                 )
-                n = cell.height
-                row: dict[str, Any] = {
-                    "category": category,
-                    "bucket": bucket,
-                    "offset": offset,
-                    "family": "primary"
-                    if bucket in PRIMARY_BUCKETS and offset in PRIMARY_OFFSETS
-                    else "secondary",
-                    "n": n,
-                    "n_events": int(cell["event_id"].n_unique()) if n else 0,
-                    "n_markets": int(cell["condition_id"].n_unique()) if n else 0,
-                    # the maker's loss events: prints whose token paid out (r = −1)
-                    "n_wins": int((cell["payout"] >= 0.5).sum()) if n else 0,
-                    "n_win_events": int(cell.filter(pl.col("payout") >= 0.5)["event_id"].n_unique())
-                    if n
-                    else 0,
-                }
-                if n:
-                    h = headline(
-                        cell["r"].to_numpy(),
-                        cell["event_id"].to_numpy(),
-                        cell["day"].to_numpy(),
-                        resamples,
-                        SEED + ci * 10_000 + bi * 100 + oi,
-                    )
-                    w = cell["maker_dollars"].to_numpy()
-                    monthly = cell.group_by("month").agg(pl.col("r").mean().alias("m"))
-                    signs = {r["month"]: r["m"] > 0 for r in monthly.iter_rows(named=True)}
-                    windows = cell.group_by(["clob_token_id", "offset", "t0"]).agg(
-                        pl.col("maker_dollars").sum().alias("flow")
-                    )
-                    capacity = float(
-                        np.minimum(
-                            SIZING_PCT * 1_000, PARTICIPATION * windows["flow"].to_numpy()
-                        ).sum()
-                        / n_months
-                    )
-                    row.update(
-                        {
-                            "r_maker": h["mean"],
-                            "ci_lo": h["ci90"][0],
-                            "ci_hi": h["ci90"][1],
-                            "se": h["se"],
-                            "cluster_key": h["key"],
-                            "p_one_sided": h["p_one_sided"],
-                            "mde_80": MDE_MULTIPLIER * h["se"],
-                            "r_size_weighted": float(np.average(cell["r"].to_numpy(), weights=w))
-                            if w.sum() > 0
-                            else None,
-                            "r_rebate": _mean(cell["r_rebate"]),
-                            "as5": _mean(cell["as5"]),
-                            "as30": _mean(cell["as30"]),
-                            "as5_coverage": 1 - cell["as5"].null_count() / n,
-                            "as30_coverage": 1 - cell["as30"].null_count() / n,
-                            "mark5_bar_share": float(cell["mark5_from_bar"].mean()),
-                            "pos_months": sum(1 for m in months if signs.get(m)),
-                            "seen_months": sum(1 for m in months if m in signs),
-                            "pos_2025h2": sum(1 for m in MONTHS_2025H2 if signs.get(m)),
-                            "pos_2026": sum(1 for m in MONTHS_2026 if signs.get(m)),
-                            "capacity_1000": capacity,
-                            "mean_p": float(cell["p"].mean()),
-                            "flow_per_month": float(cell["maker_dollars"].sum() / n_months),
-                        }
-                    )
-                else:
-                    row.update(
-                        {
-                            k: None
-                            for k in (
-                                "r_maker",
-                                "ci_lo",
-                                "ci_hi",
-                                "se",
-                                "cluster_key",
-                                "p_one_sided",
-                                "mde_80",
-                                "r_size_weighted",
-                                "r_rebate",
-                                "as5",
-                                "as30",
-                                "as5_coverage",
-                                "as30_coverage",
-                                "mark5_bar_share",
-                                "mean_p",
-                            )
-                        }
-                    )
-                    row.update(
-                        {
-                            "pos_months": 0,
-                            "seen_months": 0,
-                            "pos_2025h2": 0,
-                            "pos_2026": 0,
-                            "capacity_1000": 0.0,
-                            "flow_per_month": 0.0,
-                        }
-                    )
-                rows.append(row)
+                rows.append(
+                    {
+                        "category": category,
+                        "bucket": bucket,
+                        "offset": offset,
+                        "family": "primary"
+                        if bucket in PRIMARY_BUCKETS and offset in PRIMARY_OFFSETS
+                        else "secondary",
+                    }
+                    | cell_stats(cell, months, resamples, SEED + ci * 10_000 + bi * 100 + oi)
+                )
     return pl.DataFrame(rows)
 
 
@@ -395,9 +480,6 @@ def select_candidates(
     return candidates[:MAX_CANDIDATES], bh_pass
 
 
-MIN_WIN_EVENTS = 5
-
-
 def _tail(r: dict[str, Any]) -> str:
     """A maker's loss is the token paying out (r = −1). With fewer than MIN_WIN_EVENTS events
     in which that happened, the cluster bootstrap has (almost) no losses to resample and its
@@ -411,6 +493,29 @@ def _tail(r: dict[str, Any]) -> str:
 
 def _f(x: float | None, spec: str = "+.3f") -> str:
     return "—" if x is None else format(x, spec)
+
+
+SPLIT_HEADER = "event-wtd | 2025 H2 (n) | 2026 (n) | BY (n) | ON (n) | NONE (n)"
+
+
+def _splits(r: dict[str, Any]) -> str:
+    """event-weighted | 2025 H2 (n) | 2026 (n) | BY (n) | ON (n) | NONE (n) as table cells."""
+    return (
+        f"{_f(r['r_event_weighted'])} | {_f(r['r_2025h2'])} ({r['n_2025h2']:,}) | "
+        f"{_f(r['r_2026'])} ({r['n_2026']:,}) | {_f(r['r_BY'])} ({r['n_BY']:,}) | "
+        f"{_f(r['r_ON'])} ({r['n_ON']:,}) | {_f(r['r_NONE'])} ({r['n_NONE']:,})"
+    )
+
+
+def _pooled_line(df: pl.DataFrame, label: str) -> str:
+    w = df["maker_dollars"].to_numpy()
+    by_event = df.group_by("event_id").agg(pl.col("r").mean().alias("m"))
+    return (
+        f"| {label} | {df.height:,} | {_f(_mean(df['r']))} | "
+        f"{_f(float(np.average(df['r'].to_numpy(), weights=w)) if w.sum() > 0 else None)} | "
+        f"{_f(_mean(by_event['m']))} | {_f(_mean(df['r_rebate']))} | {_f(_mean(df['as5']))} | "
+        f"{_f(_mean(df['as30']))} |"
+    )
 
 
 def write_report(
@@ -470,6 +575,13 @@ def write_report(
                 f"{_f(c['as5'])} | {_f(c['as30'])} | {_f(c['mde_80'], '.3f')} | {c['pos_months']}/{c['seen_months']} | "
                 f"${c['capacity_1000']:,.0f} | {'pass' if key in bh_pass else 'no'} | {_tail(c)} |"
             )
+        lines.append("")
+        lines.append("Candidate splits (equal-weight r_maker unless stated):")
+        lines.append("")
+        lines.append(f"| # | Cell | {SPLIT_HEADER} |")
+        lines.append("|---|---|---|---|---|---|---|---|")
+        for i, c in enumerate(candidates, start=1):
+            lines.append(f"| {i} | {c['category']} {c['bucket']} {c['offset']} | {_splits(c)} |")
     else:
         lines.append(
             f"**Candidates: none.** No primary cell cleared the registered rule "
@@ -479,9 +591,9 @@ def write_report(
     lines.append("## Primary family — every cell with data (n ≥ 30)")
     lines.append("")
     lines.append(
-        "| Category | Bucket | Offset | n | events | wins (events) | r_maker | 90% CI | size-wtd | rebate 25% | AS 5m (cov.) | AS 30m (cov.) | MDE@80% | months + | capacity | status |"
+        "| Category | Bucket | Offset | n | events | wins (events) | r_maker | 90% CI | size-wtd | event-wtd | rebate 25% | AS 5m (cov.) | AS 30m (cov.) | MDE@80% | months + | 2025 H2 / 2026 | BY / ON / NONE | capacity | status |"
     )
-    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in (
         prim.filter(pl.col("n") >= 30).sort(["offset", "bucket", "category"]).iter_rows(named=True)
     ):
@@ -504,9 +616,11 @@ def write_report(
         )
         lines.append(
             f"| {r['category']} | {r['bucket']} | {r['offset']} | {r['n']:,} | {r['n_events']} | {r['n_wins']} ({r['n_win_events']}) | {_f(r['r_maker'])} | "
-            f"{_f(r['ci_lo'])} to {_f(r['ci_hi'])} | {_f(r['r_size_weighted'])} | {_f(r['r_rebate'])} | "
+            f"{_f(r['ci_lo'])} to {_f(r['ci_hi'])} | {_f(r['r_size_weighted'])} | {_f(r['r_event_weighted'])} | {_f(r['r_rebate'])} | "
             f"{_f(r['as5'])} ({r['as5_coverage']:.0%}) | {_f(r['as30'])} ({r['as30_coverage']:.0%}) | {_f(r['mde_80'], '.3f')} | "
-            f"{r['pos_months']}/{r['seen_months']} | ${r['capacity_1000']:,.0f} | {status}{'; ' + _tail(r) if _tail(r) else ''} |"
+            f"{r['pos_months']}/{r['seen_months']} | {_f(r['r_2025h2'])} / {_f(r['r_2026'])} | "
+            f"{_f(r['r_BY'])} / {_f(r['r_ON'])} / {_f(r['r_NONE'])} | ${r['capacity_1000']:,.0f} | "
+            f"{status}{'; ' + _tail(r) if _tail(r) else ''} |"
         )
     n_empty = prim.filter(pl.col("n") < 30).height
     lines.append("")
@@ -514,46 +628,46 @@ def write_report(
         f"{n_empty} of {prim.height} primary cells have fewer than 30 prints and are not listed."
     )
     lines.append("")
-    lines.append("## Pooled view (primary family, by bucket and by offset)")
+    lines.append("## Pooled view (primary family)")
     lines.append("")
-    lines.append("| Slice | n | r_maker (equal) | size-weighted | rebate 25% | AS 5m | AS 30m |")
-    lines.append("|---|---|---|---|---|---|---|")
+    lines.append(
+        "| Slice | n | r_maker (equal) | size-weighted | event-weighted | rebate 25% | AS 5m | AS 30m |"
+    )
+    lines.append("|---|---|---|---|---|---|---|---|")
     pf = df.filter(
         (pl.col("duration_class") != "ultra_short")
         & pl.col("bucket").is_in(PRIMARY_BUCKETS)
         & pl.col("offset").is_in(PRIMARY_OFFSETS)
     )
-    for name, grp in [("bucket", PRIMARY_BUCKETS), ("offset", PRIMARY_OFFSETS)]:
+    slices: list[tuple[str, list[str]]] = [
+        ("bucket", PRIMARY_BUCKETS),
+        ("offset", PRIMARY_OFFSETS),
+        ("deadline_type", list(DEADLINE_TYPES)),
+    ]
+    for name, grp in slices:
         for v in grp:
             s = pf.filter(pl.col(name) == v)
-            if not s.height:
-                continue
-            w = s["maker_dollars"].to_numpy()
-            lines.append(
-                f"| {name} {v} | {s.height:,} | {_f(_mean(s['r']))} | "
-                f"{_f(float(np.average(s['r'].to_numpy(), weights=w)) if w.sum() > 0 else None)} | "
-                f"{_f(_mean(s['r_rebate']))} | {_f(_mean(s['as5']))} | {_f(_mean(s['as30']))} |"
-            )
+            if s.height:
+                lines.append(_pooled_line(s, f"{name} {v}"))
+    for label, ms in (("2025 H2", MONTHS_2025H2), ("2026 Feb–May", MONTHS_2026)):
+        s = pf.filter(pl.col("month").is_in(ms))
+        if s.height:
+            lines.append(_pooled_line(s, f"year {label}"))
     if pf.height:
-        w = pf["maker_dollars"].to_numpy()
-        lines.append(
-            f"| **all primary** | {pf.height:,} | {_f(_mean(pf['r']))} | "
-            f"{_f(float(np.average(pf['r'].to_numpy(), weights=w)))} | {_f(_mean(pf['r_rebate']))} | "
-            f"{_f(_mean(pf['as5']))} | {_f(_mean(pf['as30']))} |"
-        )
+        lines.append(_pooled_line(pf, "**all primary**"))
     lines.append("")
     lines.append("## Secondary family (reported, never selected) — cells with n ≥ 100")
     lines.append("")
     lines.append(
-        "| Category | Bucket | Offset | n | r_maker | 90% CI | AS 30m | MDE@80% | months + |"
+        "| Category | Bucket | Offset | n | wins (events) | r_maker | 90% CI | event-wtd | AS 30m | MDE@80% | months + |"
     )
-    lines.append("|---|---|---|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
     for r in (
         sec.filter(pl.col("n") >= 100).sort(["offset", "bucket", "category"]).iter_rows(named=True)
     ):
         lines.append(
-            f"| {r['category']} | {r['bucket']} | {r['offset']} | {r['n']:,} | {_f(r['r_maker'])} | "
-            f"{_f(r['ci_lo'])} to {_f(r['ci_hi'])} | {_f(r['as30'])} | {_f(r['mde_80'], '.3f')} | {r['pos_months']}/{r['seen_months']} |"
+            f"| {r['category']} | {r['bucket']} | {r['offset']} | {r['n']:,} | {r['n_wins']} ({r['n_win_events']}) | {_f(r['r_maker'])} | "
+            f"{_f(r['ci_lo'])} to {_f(r['ci_hi'])} | {_f(r['r_event_weighted'])} | {_f(r['as30'])} | {_f(r['mde_80'], '.3f')} | {r['pos_months']}/{r['seen_months']} |"
         )
     if ultra.height:
         lines.append("")
@@ -577,6 +691,177 @@ def write_report(
     return out / "report.md"
 
 
+# ------------------------------------------------------------------ confirmation (C1, C2)
+
+
+def candidate_list(out: Path) -> list[dict[str, str]]:
+    """The candidates exactly as the D report selected them (never edited by hand)."""
+    summary = json.loads((out / "summary.json").read_text())
+    return [
+        {"category": c["category"], "bucket": c["bucket"], "offset": c["offset"]}
+        for c in summary["candidates"]
+    ]
+
+
+def set_rule(s: dict[str, Any]) -> str:
+    """registration.yaml `confirmation_criteria`, per set, on the realistic preset."""
+    decisive = s["n"] >= CONFIRM_MIN_N and s["n_win_events"] >= MIN_WIN_EVENTS
+    if not decisive:
+        return "underpowered"
+    majority = s["pos_months"] > s["seen_months"] / 2
+    ok = bool(
+        s["ci_lo"] is not None
+        and s["ci_lo"] > 0
+        and majority
+        and s["capacity_1000"] >= MIN_CAPACITY
+    )
+    return "pass" if ok else "fail"
+
+
+def confirm(set_name: str, months: list[str], out: Path, resamples: int) -> Path:
+    cands = candidate_list(out)
+    base = load(months)
+    results: list[dict[str, Any]] = []
+    for i, c in enumerate(cands):
+        entry: dict[str, Any] = {"cell": c, "presets": {}}
+        for preset, shift in PRESETS.items():
+            df = derive(base, shift).filter(
+                (pl.col("duration_class") != "ultra_short")
+                & (pl.col("category") == c["category"])
+                & (pl.col("bucket") == c["bucket"])
+                & (pl.col("offset") == c["offset"])
+            )
+            entry["presets"][preset] = cell_stats(
+                df, months, resamples, SEED + 1_000_000 + i * 10 + int(shift * 100)
+            )
+        entry["set_rule"] = set_rule(entry["presets"]["realistic"])
+        results.append(entry)
+    lines = [
+        f"## s1b_resting_order on {set_name} ({', '.join(months)})",
+        "",
+        f"Generated {datetime.now(UTC).isoformat(timespec='seconds')}; {base.height:,} taker-BUY prints "
+        f"loaded ({base.filter(pl.col('duration_class') != 'ultra_short').height:,} outside ultra_short). "
+        "Presets: realistic = fill at the print price (deciding); conservative = one tick worse for the maker.",
+        "",
+        "| # | Cell | preset | n | events | loss events (prints) | r_maker | 90% CI (key) | size-wtd | event-wtd | rebate 25% | AS 5m | AS 30m | MDE@80% | months + | capacity $1k/mo | set rule |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for i, e in enumerate(results, start=1):
+        c = e["cell"]
+        for preset, s in e["presets"].items():
+            rule = e["set_rule"] if preset == "realistic" else ""
+            lines.append(
+                f"| {i} | {c['category']} {c['bucket']} {c['offset']} | {preset} | {s['n']:,} | {s['n_events']} | "
+                f"{s['n_win_events']} ({s['n_wins']}) | {_f(s['r_maker'])} | {_f(s['ci_lo'])} to {_f(s['ci_hi'])} ({s['cluster_key']}) | "
+                f"{_f(s['r_size_weighted'])} | {_f(s['r_event_weighted'])} | {_f(s['r_rebate'])} | {_f(s['as5'])} | {_f(s['as30'])} | "
+                f"{_f(s['mde_80'], '.3f')} | {s['pos_months']}/{s['seen_months']} | ${s['capacity_1000']:,.0f} | {rule}{'; ' + _tail(s) if _tail(s) else ''} |"
+            )
+    lines.append("")
+    lines.append("Splits, realistic preset:")
+    lines.append("")
+    lines.append(f"| # | Cell | {SPLIT_HEADER} |")
+    lines.append("|---|---|---|---|---|---|---|---|")
+    for i, e in enumerate(results, start=1):
+        c = e["cell"]
+        lines.append(
+            f"| {i} | {c['category']} {c['bucket']} {c['offset']} | {_splits(e['presets']['realistic'])} |"
+        )
+    (out / f"confirmation_{set_name}.md").write_text("\n".join(lines) + "\n")
+    (out / f"confirmation_{set_name}.json").write_text(
+        json.dumps(
+            {
+                "set": set_name,
+                "months": months,
+                "prints": base.height,
+                "results": results,
+                "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            },
+            indent=1,
+            default=str,
+        )
+        + "\n"
+    )
+    print("\n".join(lines))
+    return out / f"confirmation_{set_name}.md"
+
+
+def verdict(out: Path) -> Path:
+    """registration.yaml `confirmation_criteria`: confirmed / promising-unconfirmed / rejected /
+    underpowered per candidate, provisional while C2 is incomplete."""
+    c1 = json.loads((out / "confirmation_C1.json").read_text())
+    c2 = json.loads((out / "confirmation_C2.json").read_text())
+    c2_complete = "2026-09" in c2["months"]
+    rows = []
+    for e1, e2 in zip(c1["results"], c2["results"], strict=True):
+        assert e1["cell"] == e2["cell"]
+        r1, r2 = e1["set_rule"], e2["set_rule"]
+        k1, k2 = e1["presets"]["conservative"], e2["presets"]["conservative"]
+        n_cons = k1["n"] + k2["n"]
+        cons_pooled = (
+            ((k1["r_maker"] or 0) * k1["n"] + (k2["r_maker"] or 0) * k2["n"]) / n_cons
+            if n_cons
+            else None
+        )
+        cons_decisive = n_cons >= CONFIRM_MIN_N and (
+            k1["n_win_events"] + k2["n_win_events"] >= MIN_WIN_EVENTS
+        )
+        cons_negative = cons_decisive and cons_pooled is not None and cons_pooled <= 0
+        if r1 == "underpowered":
+            v = "underpowered"
+        elif r1 == "fail" or r2 == "fail" or cons_negative:
+            v = "rejected"
+        elif r1 == "pass" and r2 == "pass" and cons_pooled is not None and cons_pooled > 0:
+            v = "confirmed"
+        elif r1 == "pass" and r2 == "underpowered":
+            v = "promising-unconfirmed"
+        else:
+            v = "underpowered"
+        rows.append(
+            {
+                "cell": e1["cell"],
+                "C1": r1,
+                "C2": r2,
+                "loss_events": {
+                    "C1": e1["presets"]["realistic"]["n_win_events"],
+                    "C2": e2["presets"]["realistic"]["n_win_events"],
+                },
+                "conservative_pooled": cons_pooled,
+                "verdict": v,
+                "provisional": not c2_complete,
+            }
+        )
+    lines = [
+        "## Verdicts (registration.yaml `confirmation_criteria`)",
+        "",
+        f"C2 months: {', '.join(c2['months'])}"
+        + ("" if c2_complete else " — incomplete (2026-09 pending); every verdict is provisional."),
+        "",
+        "| Cell | C1 | C2 | loss events C1 / C2 | conservative C1 ∪ C2 | verdict |",
+        "|---|---|---|---|---|---|",
+    ]
+    for r in rows:
+        c = r["cell"]
+        lines.append(
+            f"| {c['category']} {c['bucket']} {c['offset']} | {r['C1']} | {r['C2']} | "
+            f"{r['loss_events']['C1']} / {r['loss_events']['C2']} | {_f(r['conservative_pooled'])} | "
+            f"**{r['verdict']}**{' (provisional)' if r['provisional'] else ''} |"
+        )
+    (out / "verdicts.md").write_text("\n".join(lines) + "\n")
+    (out / "verdicts.json").write_text(
+        json.dumps(
+            {
+                "rows": rows,
+                "c2_complete": c2_complete,
+                "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            },
+            indent=1,
+        )
+        + "\n"
+    )
+    print("\n".join(lines))
+    return out / "verdicts.md"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -586,8 +871,18 @@ def main() -> None:
     p.add_argument("--months", nargs="+", required=True)
     p.add_argument("--out", default=str(STUDY / "report"))
     p.add_argument("--resamples", type=int, default=10_000)
+    c = sub.add_parser("confirm")
+    c.add_argument("--set", required=True, choices=["C1", "C2"])
+    c.add_argument("--months", nargs="+", required=True)
+    c.add_argument("--out", default=str(STUDY / "report"))
+    c.add_argument("--resamples", type=int, default=10_000)
+    v = sub.add_parser("verdict")
+    v.add_argument("--out", default=str(STUDY / "report"))
     args = ap.parse_args()
 
+    if args.cmd == "verdict":
+        verdict(Path(args.out))
+        return
     registration = yaml.safe_load((STUDY / "registration.yaml").read_text())
     n_register = family_counts().get("s1b_resting_order:cells", 0)
     expected = len(PRIMARY_BUCKETS) * len(PRIMARY_OFFSETS) * len(CATEGORIES)
@@ -595,8 +890,12 @@ def main() -> None:
         f"register has {n_register} S1b cells; expected {expected} "
         f"(registration: {registration['primary_cells']}); register it first"
     )
+    if args.cmd == "confirm":
+        assert "confirmation_criteria" in registration, "write the confirmation criteria first"
+        confirm(args.set, args.months, Path(args.out), args.resamples)
+        return
     print(f"loading taker-BUY prints for {len(args.months)} month(s)", flush=True)
-    df = load(args.months)
+    df = derive(load(args.months))
     print(
         f"{df.height:,} prints; computing {len(CATEGORIES) * len(BUCKETS) * len(OFFSETS)} cells",
         flush=True,

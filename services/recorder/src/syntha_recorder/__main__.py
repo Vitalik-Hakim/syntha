@@ -73,12 +73,18 @@ def static_source(tokens: set[str]) -> WatchlistSource:
     return load
 
 
-def designed_source(database_url: str, target: int, categories: tuple[str, ...]) -> WatchlistSource:
+def designed_source(
+    database_url: str, target: int, categories: tuple[str, ...], final_24h_slots: int
+) -> WatchlistSource:
     """The v3 E7 watchlist: refill the table, then record everything active in it."""
 
     async def load() -> set[str]:
         return await asyncio.to_thread(
-            watchlist.refresh, database_url, target=target, categories=categories
+            watchlist.refresh,
+            database_url,
+            target=target,
+            categories=categories,
+            final_24h_slots=final_24h_slots,
         )
 
     return load
@@ -99,6 +105,9 @@ def main() -> None:
     p.add_argument("--top", type=int, help="v2 behaviour: top N markets by 24h volume")
     p.add_argument("--target-per-stratum", type=int, default=watchlist.TARGET_PER_STRATUM)
     p.add_argument("--categories", default=",".join(watchlist.DEFAULT_CATEGORIES))
+    p.add_argument("--final-24h-slots", type=int, default=watchlist.FINAL_24H_SLOTS)
+    p.add_argument("--retention-days", type=int, default=30)
+    p.add_argument("--disk-cap-gb", type=float, default=20.0)
     p.add_argument("--refresh-minutes", type=float, default=60)
     p.add_argument("--flush-seconds", type=float, default=2)
     p.add_argument("--coverage", action="store_true")
@@ -129,13 +138,15 @@ def main() -> None:
     elif args.top:
         source = top_markets_source(args.top)
     else:
-        source = designed_source(db, args.target_per_stratum, categories)
+        source = designed_source(db, args.target_per_stratum, categories, args.final_24h_slots)
 
     config = RecorderConfig(
         database_url=db,
         raw_dir=raw_dir,
         flush_seconds=args.flush_seconds,
         watchlist_refresh_seconds=args.refresh_minutes * 60,
+        retention_days=args.retention_days,
+        disk_cap_bytes=int(args.disk_cap_gb * 1e9),
     )
 
     async def runner() -> None:

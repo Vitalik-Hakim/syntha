@@ -60,12 +60,15 @@ estimand: >
   E[r] per follower position under CURRENT fees, reported as a decay curve over lag per
   (min_notional, variant, fill_model); cluster bootstrap by event and by UTC day, wider 90% CI
   as headline; MDE@80% on every cell; both nulls' best-of-N alongside.
+min_losing_events: 5   # docs/RESEARCH_PROTOCOL.md, "Registration template additions"
 selection_rule: |
   A cell is a candidate if all of: wider cluster 90% CI above zero under the marketable-limit
   model; positive in >= 3 of 4 Phase A months; beats both nulls' 95th percentile; n >= 300
-  follower positions from >= 100 distinct wallets; capacity >= $50/month at $1,000 with 10%
-  participation. min_notional and lag are chosen on D and frozen before Phase B fetches.
-confirmation_rule: PRD v3 §6.2 on C1 then C2, both fill models reported, verdict on the marketable-limit model
+  follower positions from >= 100 distinct wallets; at least min_losing_events distinct events
+  in which the follower position lost (else "no tail observed", never selected); capacity
+  >= $50/month at $1,000 with 10% participation. min_notional and lag are chosen on D and
+  frozen before Phase B fetches.
+confirmation_rule: PRD v3 §6.2 on C1 then C2, both fill models reported, verdict on the marketable-limit model; a set with fewer than min_losing_events losing events is underpowered, not a pass
 frozen_parameters:
   limit_offset_ticks: 2
   ttl_bars: 5

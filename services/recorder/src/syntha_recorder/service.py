@@ -25,6 +25,7 @@ from typing import Any
 import psycopg
 import websockets
 
+from syntha_recorder import disk
 from syntha_recorder.parse import DeltaRow, SnapshotRow, events, rows
 
 log = logging.getLogger(__name__)
@@ -40,6 +41,8 @@ class RecorderConfig:
     flush_seconds: float = 2.0
     watchlist_refresh_seconds: float = 3600.0
     ws_url: str = WS_URL
+    retention_days: int | None = None  # drop hypertable chunks older than this at each refresh
+    disk_cap_bytes: int | None = None  # hard cap on hypertables + raw/ws_market; see disk.py
 
 
 @dataclass
@@ -203,6 +206,17 @@ async def _session(
                     totals[1] += d
                 last_flush = now
             if now - last_refresh >= config.watchlist_refresh_seconds:
+                if config.disk_cap_bytes is not None or config.retention_days is not None:
+                    decision = await asyncio.to_thread(
+                        disk.enforce,
+                        conn,
+                        config.raw_dir,
+                        retention_days=config.retention_days or 10**6,
+                        cap_bytes=config.disk_cap_bytes or 2**62,
+                    )
+                    if decision == "stop":
+                        stop.set()
+                        break
                 new = await watchlist()
                 added, removed = new - watched, watched - new
                 if added:
