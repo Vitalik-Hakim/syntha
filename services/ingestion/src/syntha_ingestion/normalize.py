@@ -22,6 +22,7 @@ import hashlib
 import itertools
 import json
 import logging
+import shutil
 import traceback
 import uuid
 from array import array
@@ -517,9 +518,43 @@ def _session(conn: psycopg.Connection[Any]) -> None:
     conn.execute("SET extra_float_digits TO 0")
 
 
-def rebuild(settings: IngestSettings) -> RebuildResult:
+def require_free_space(path: Path, min_free_gb: float) -> float:
+    """Free gigabytes on the filesystem holding `path`; raises when below `min_free_gb`.
+
+    The database's files live in Docker's VM image on the same disk as `data/`, so the host's
+    free space is what a rebuild can consume (docs/DECISIONS.md, "Disk incident")."""
+    free_gb = shutil.disk_usage(path).free / 1e9
+    if free_gb < min_free_gb:
+        raise RuntimeError(
+            f"{free_gb:.0f} GB free under {path}; a rebuild needs at least {min_free_gb:.0f} GB "
+            "(the new layer is written before the old one is dropped). Free space or lower "
+            "--min-free-gb deliberately."
+        )
+    return free_gb
+
+
+def truncate_normalized(database_url: str) -> None:
+    """Drop the current normalized layer in its own transaction, before the rebuild's, so the
+    rebuild's peak disk use is the new layer alone (a rolled-back rebuild then leaves no layer,
+    which `make verify-normalized` reports; the tables are disposable by design)."""
+    with (
+        psycopg.connect(psycopg_url(database_url)) as conn,
+        conn.transaction(),
+        conn.cursor() as cur,
+    ):
+        cur.execute("TRUNCATE " + ", ".join(t for t, _ in NORMALIZED_TABLES) + " RESTART IDENTITY")
+    log.info("normalized tables truncated ahead of the rebuild")
+
+
+def rebuild(
+    settings: IngestSettings, *, truncate_first: bool = False, min_free_gb: float = 0.0
+) -> RebuildResult:
     from syntha_ingestion.quality import build_quality
 
+    if min_free_gb > 0:
+        log.info("free space: %.0f GB", require_free_space(settings.data_dir, min_free_gb))
+    if truncate_first:
+        truncate_normalized(settings.database_url)
     raw = RawStore(settings.raw_dir)
     build = BuildLog()
 

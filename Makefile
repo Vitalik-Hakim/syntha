@@ -151,8 +151,10 @@ census-verify: ## Recompute the census hash for MONTH and compare with the recor
 	$(INGEST) census-verify --month $(MONTH)
 
 .PHONY: rebuild-normalized
-rebuild-normalized: ## Rebuild the normalized tables from data/raw alone and record a dataset version
-	$(INGEST) normalize
+REBUILD_MIN_FREE_GB ?= 150
+
+rebuild-normalized: ## Rebuild the normalized tables from data/raw alone and record a dataset version (truncates the old layer first; refuses below REBUILD_MIN_FREE_GB free)
+	$(INGEST) normalize --truncate-first --min-free-gb $(REBUILD_MIN_FREE_GB)
 
 .PHONY: verify-normalized
 verify-normalized: ## Check the normalized tables still match the latest dataset version hash

@@ -66,7 +66,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
 
 def cmd_normalize(args: argparse.Namespace) -> int:
-    result = rebuild(_settings(args))
+    result = rebuild(
+        _settings(args), truncate_first=args.truncate_first, min_free_gb=args.min_free_gb
+    )
     print(
         json.dumps(
             {
@@ -229,9 +231,19 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--name", required=True)
     f.set_defaults(func=cmd_fetch)
 
-    sub.add_parser("normalize", help="rebuild normalized tables from raw/").set_defaults(
-        func=cmd_normalize
+    n = sub.add_parser("normalize", help="rebuild normalized tables from raw/")
+    n.add_argument(
+        "--truncate-first",
+        action="store_true",
+        help="drop the current layer before loading so peak disk use is the new layer alone",
     )
+    n.add_argument(
+        "--min-free-gb",
+        type=float,
+        default=0.0,
+        help="refuse to start with less than this much free space under the data dir",
+    )
+    n.set_defaults(func=cmd_normalize)
     sub.add_parser(
         "verify", help="check normalized tables match the latest dataset version"
     ).set_defaults(func=cmd_verify)

@@ -390,3 +390,30 @@ def test_census_months_join_the_layer_as_hourly_collections(tmp_path: Path, db_u
             ).fetchone()[0]
             > 0
         )
+
+
+def test_rebuild_guard_refuses_without_free_space(tmp_path: Path) -> None:
+    from syntha_ingestion.normalize import require_free_space
+
+    assert require_free_space(tmp_path, 0.0) > 0
+    with pytest.raises(RuntimeError, match="free under"):
+        require_free_space(tmp_path, 10_000_000.0)  # ten petabytes
+
+
+def test_truncate_first_drops_the_layer_before_the_rebuild(tmp_path: Path, db_url: str) -> None:
+    """`make rebuild-normalized` truncates the old layer in its own transaction so the rebuild's
+    peak disk use is the new layer alone (docs/DECISIONS.md, 'Disk incident')."""
+    from syntha_ingestion.normalize import truncate_normalized
+
+    _raw_fixture(tmp_path / "raw")
+    settings = IngestSettings(data_dir=tmp_path, database_url=db_url)
+    rebuild(settings)
+    truncate_normalized(db_url)
+    with psycopg.connect(psycopg_url(db_url)) as conn:
+        assert conn.execute("SELECT count(*) FROM price_bars").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM markets").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM dataset_versions").fetchone()[0] >= 1
+    current, recorded = verify(settings)
+    assert current != recorded  # verify reports the missing layer
+    result = rebuild(settings, truncate_first=True, min_free_gb=0.001)
+    assert result.content_hash == recorded  # the rebuilt layer is the same content

@@ -389,3 +389,34 @@ def test_census_build_is_bit_identical(tmp_path: Path, db_url: str) -> None:
         60,
     )
     assert cm == ("weather", "multi_day", "binary", "ON", "YES", False)
+
+
+def test_window_vwap_selects_dips_and_the_first_fill_does_not() -> None:
+    """Regression fixture for the second M9 artefact (docs/DATA_NOTES.md, 'M9 discovery, first
+    pass'): the fill VWAP averages only the prints at or below mid + 1 tick, so a market that
+    dips inside the window "fills" below mid on *both* tokens — an impossible pair whose returns
+    sum to more than zero mechanically. `fill_first_10m` (the first qualifying print) does not
+    have this property; the census carries both and S1 reports both."""
+    ts = T0 + DAY
+    yes_prints = [
+        _print(ts + 60, 0.50, 100),
+        _print(ts + 120, 0.44, 100),
+        _print(ts + 180, 0.50, 100),
+    ]
+    no_prints = [
+        _print(ts + 60, 0.50, 100, token=NO),
+        _print(ts + 240, 0.44, 100, token=NO),
+        _print(ts + 300, 0.50, 100, token=NO),
+    ]
+    mid_yes = mid_no = 0.50
+    vwap_yes, _, first_yes = C.fill_in_window(yes_prints, ts, 600, mid_yes + 0.01)
+    vwap_no, _, first_no = C.fill_in_window(no_prints, ts, 600, mid_no + 0.01)
+    assert vwap_yes == pytest.approx(0.48) and vwap_no == pytest.approx(0.48)
+    assert vwap_yes + vwap_no < 1.0  # both "filled" below fair: the artefact
+    assert first_yes == 0.50 and first_no == 0.50
+    assert first_yes + first_no == pytest.approx(1.0)  # the first-print fill has no such gain
+    # the mechanical gain: with payout 1 to one token and 0 to the other, the VWAP pair returns
+    # (1 - 0.48)/0.48 + (0 - 0.48)/0.48 = +8.3% for free; the first-print pair returns 0.
+    gain_vwap = (1 - vwap_yes) / vwap_yes + (0 - vwap_no) / vwap_no
+    gain_first = (1 - first_yes) / first_yes + (0 - first_no) / first_no
+    assert gain_vwap == pytest.approx(0.0833, abs=1e-3) and gain_first == pytest.approx(0.0)

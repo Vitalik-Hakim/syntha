@@ -1,0 +1,15 @@
+{
+  "_about": "Regression fixture for the M9 discovery artefact (docs/DATA_NOTES.md, 'M9 discovery, first pass'). Real question forms of the 5/15/60-minute crypto series that were listed days ahead and so entered the primary S1 cells as multi_day/intraday. Each entry: the question, the window the parser must read from it (minutes, or null), and the duration class when the market opened 3 days before its scheduled end.",
+  "cases": [
+    {"question": "Bitcoin Up or Down - March 28, 4:15AM-4:30AM ET", "window_minutes": 15, "class_when_listed_3_days_ahead": "ultra_short", "pass": 2},
+    {"question": "Ethereum Up or Down - March 28, 2:25AM-2:30AM ET", "window_minutes": 5, "class_when_listed_3_days_ahead": "ultra_short", "pass": 2},
+    {"question": "XRP Up or Down - April 2, 11:45PM-12:00AM ET", "window_minutes": 15, "class_when_listed_3_days_ahead": "ultra_short", "pass": 2},
+    {"question": "Solana Up or Down - July 4, 11PM-12AM ET", "window_minutes": 60, "class_when_listed_3_days_ahead": "ultra_short", "pass": 2},
+    {"question": "Bitcoin Up or Down - August 5, 12PM ET", "window_minutes": 60, "class_when_listed_3_days_ahead": "ultra_short", "pass": 3},
+    {"question": "Ethereum Up or Down - September 30, 3AM ET", "window_minutes": 60, "class_when_listed_3_days_ahead": "ultra_short", "pass": 3},
+    {"question": "Will BTC move 2% in the next 5 minutes?", "window_minutes": 5, "class_when_listed_3_days_ahead": "ultra_short", "pass": 2},
+    {"question": "Bitcoin Up or Down on July 31?", "window_minutes": null, "class_when_listed_3_days_ahead": "multi_day", "pass": 3},
+    {"question": "Will Bitcoin be above $120k on July 31?", "window_minutes": null, "class_when_listed_3_days_ahead": "multi_day", "pass": 1},
+    {"question": "Will Ethereum be between $3000 and $3100 on July 14 at 5PM ET?", "window_minutes": null, "class_when_listed_3_days_ahead": "multi_day", "pass": 1}
+  ]
+}

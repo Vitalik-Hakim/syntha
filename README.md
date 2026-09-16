@@ -79,8 +79,7 @@ SAMPLE_SEED=…`, then `make ingest-fetch COLLECTION=name`. Read
 [docs/DATA_NOTES.md](docs/DATA_NOTES.md) before trusting any number: the "price history" is
 a sampled mid-like price, not trades, and fees have history the API only partly exposes.
 
-The recorder watches a stratified list of ~48 markets (4 categories × binary/multi × thin/liquid, refilled hourly; `recorder_watchlist`) and stores `last_trade_price` prints with their `fee_rate_bps`. It produced roughly 5–6M order-book delta rows per day for 10 markets in M1. Compression
-starts after two days.
+The recorder watches a stratified list of ~48 markets (4 categories × binary/multi × thin/liquid, refilled hourly; `recorder_watchlist`) and stores `last_trade_price` prints with their `fee_rate_bps`. Actual growth is whatever `make recorder-coverage` reports for the last 7 days; on 2026-09-16 it showed 10 token-days on a single day (2026-09-14: 2,620 rows, 0 trades, 0.0 raw MB), recorder hypertables at 0.00 GB and an empty active watchlist — the recorder is not running. The M1 figure (5–6M delta rows per day for 10 markets) is history, not the current rate. Compression starts after one day.
 
 ## Backtests
 

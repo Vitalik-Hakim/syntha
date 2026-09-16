@@ -146,3 +146,24 @@ def test_question_window_marks_short_crypto_markets_ultra_short() -> None:
         == "ultra_short"
     )
     assert duration_class(open_ts, end_ts, "Will Bitcoin be above $120k on July 31?") == "multi_day"
+
+
+def test_ultra_short_fixture_regression() -> None:
+    """The M9 discovery artefact: every question form of the short crypto series listed days
+    ahead must classify as ultra_short (docs/DATA_NOTES.md, 'M9 discovery'); the fixture keeps
+    the real strings so a parser change cannot quietly readmit them to the primary cells."""
+    import json
+    from datetime import UTC, datetime, timedelta
+    from pathlib import Path
+
+    from syntha_ingestion.parse import duration_class, question_window_minutes
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "ultra_short_questions.json").read_text()
+    )
+    end_ts = datetime(2026, 3, 28, 8, 30, tzinfo=UTC)
+    open_ts = end_ts - timedelta(days=3)
+    for case in fixture["cases"]:
+        q = case["question"]
+        assert question_window_minutes(q) == case["window_minutes"], q
+        assert duration_class(open_ts, end_ts, q) == case["class_when_listed_3_days_ahead"], q

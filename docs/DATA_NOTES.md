@@ -789,6 +789,15 @@ rare; the MDE (25 points on D) is far above the 5-point target, so this is a neg
 with an MDE, not evidence about the hypothesis. Test 1 (BY-vs-ON calibration contrasts) had
 no BY arm with 100 observations and stays untested.
 
+### Recorder growth per day — measured, not assumed (2026-09-16)
+
+`make recorder-coverage` on 2026-09-16 (after the day's Docker restarts): last 7 days = 10
+token-days, all on 2026-09-14 (2,620 rows, 0 trades, 0 gaps > 5 min, 0.0 raw MB); recorder
+hypertables 0.00 GB; the active watchlist is empty ("run the recorder once to fill it"). The
+recorder is not running and has recorded nothing since 2026-09-14; the README's M1 figure of
+5–6M delta rows per day for 10 markets does not describe the present. S5 (maker simulation)
+needs ≥ 30 days of E7 recording and has none yet.
+
 ### The three M9 decisions (product owner, 2026-09-15)
 
 - **Capacity denominator = the collection's coverage window** (`Dataset.coverage`, from the
