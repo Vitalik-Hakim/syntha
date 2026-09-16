@@ -845,6 +845,28 @@ months hold up to 65M 1-minute bars each, so the marks now fetch only the bars a
 mark minutes through a temp table (the first C1 attempt stalled at 27 GB of swap), and the
 bars join hashes the fills' side.
 
+### Recorder stopped at pause (2026-09-16 21:01:08 UTC) — coverage window and a lost hour
+
+Started 2026-09-16 17:20:41 UTC (restarted 17:23:40 with the widened refresh), stopped
+21:01:08 UTC by the pause. Raw frames: `raw/ws_market/2026-09-16/17..21.jsonl.gz`, 105.8 MB,
+continuous from 17:20 to 21:01 (one websocket reconnect at 19:54:35). Database rows:
+**17:20:41 to 18:23:38 UTC only** — 439,124 `orderbook_deltas` and 11,474 `orderbook_snapshots`
+across 42 tokens (25 markets active at stop: the seven liquid strata plus one crypto thin;
+no `politics/final_24h` entry appeared — none was ending within 24 hours all evening).
+Coverage report at stop: 52 token-days over three days (10 on 2026-09-14 from the earlier
+run, 42 on 2026-09-16), 6 gaps > 5 minutes, hypertables 1.17 GB before compression, raw
+105.8 MB. The recorder's own counters reported 744,992 deltas written; the difference is the
+rows after 18:23: the new disk guard's size query ran outside a transaction block on a
+non-autocommit connection, opened an implicit transaction that nothing committed, and every
+later batch nested inside it as a savepoint and was rolled back when the process was killed.
+Fixed the same evening (`syntha_recorder.disk` wraps its reads; a regression test with a fake
+connection refuses bare executes). Those rows exist only in the raw frames, which are deleted
+at this pause along with the rest of `data/raw`; nothing of this recording survives. **The S5
+30-day recording clock restarts from zero on resume.** Growth per day, measured on the one
+committed hour: about 440k delta rows and 26 MB of gzip frames per hour for 42 tokens, i.e.
+roughly 10M rows and 0.6 GB of raw frames per day at this watchlist size — the 24-hour
+confirmation the plan asked for was never reached.
+
 ### The three M9 decisions (product owner, 2026-09-15)
 
 - **Capacity denominator = the collection's coverage window** (`Dataset.coverage`, from the

@@ -43,7 +43,7 @@ COLUMNS = (
     "status",
     "result",
 )
-STATUSES = ("registered", "running", "done", "withdrawn")
+STATUSES = ("registered", "running", "done", "withdrawn", "paused")
 HEADER = """# Hypothesis register (PRD v3 §3.6)
 
 Every configuration, cell, wallet rule or scan variant is a row here **before** it runs; the

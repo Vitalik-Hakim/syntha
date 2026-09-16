@@ -45,7 +45,13 @@ def raw_size(raw_dir: Path) -> int:
 
 
 def db_size(conn: psycopg.Connection[Any]) -> int:
-    row = conn.execute("SELECT " + " + ".join(f"hypertable_size('{t}')" for t in TABLES)).fetchone()
+    # inside a transaction block: on a non-autocommit connection a bare execute opens an
+    # implicit transaction that nothing commits, and every later write nests inside it and
+    # is lost when the process ends (this happened on 2026-09-16; docs/DATA_NOTES.md)
+    with conn.transaction():
+        row = conn.execute(
+            "SELECT " + " + ".join(f"hypertable_size('{t}')" for t in TABLES)
+        ).fetchone()
     return int(row[0]) if row and row[0] is not None else 0
 
 
@@ -62,15 +68,15 @@ def apply_retention(conn: psycopg.Connection[Any], retention_days: int) -> int:
 
 
 def drop_oldest_chunk(conn: psycopg.Connection[Any]) -> bool:
-    row = conn.execute(
-        """SELECT format('%I.%I', chunk_schema, chunk_name), range_end
-           FROM timescaledb_information.chunks
-           WHERE hypertable_name = ANY(%s) ORDER BY range_end LIMIT 1""",
-        (list(TABLES),),
-    ).fetchone()
-    if row is None:
-        return False
     with conn.transaction():
+        row = conn.execute(
+            """SELECT format('%I.%I', chunk_schema, chunk_name), range_end
+               FROM timescaledb_information.chunks
+               WHERE hypertable_name = ANY(%s) ORDER BY range_end LIMIT 1""",
+            (list(TABLES),),
+        ).fetchone()
+        if row is None:
+            return False
         conn.execute(f"DROP TABLE {row[0]}")
     log.warning("disk cap: dropped chunk %s (up to %s)", row[0], row[1])
     return True

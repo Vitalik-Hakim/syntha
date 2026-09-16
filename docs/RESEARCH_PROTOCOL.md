@@ -303,3 +303,16 @@ resamples the clusters it saw; with no (or almost no) losing clusters its interv
 of the coupon, not a statement about the tail. S1b's politics [0.01,0.03) −1h cell (563 prints,
 66 events, zero paid out, CI +0.019 to +0.022) is the worked example. The criterion is not
 applied retroactively to S1b's own selection rule (its report flags such cells instead).
+
+### Pause (2026-09-16)
+
+The programme is paused after M9 and the S1b measurement. Register rows that wait for data are
+marked `paused` with the date: the S1b confirmation criteria (R-0946), the five S1b candidate
+cells (R-0793, R-0804, R-0808, R-0815, R-0888) and `s1b_by` (R-0947, registered at pause from a
+post-hoc split and therefore D-informed). Provisional rows are not closed. **On resume,
+September 2026 and October 2026 are new registrations**: September completes C2 for the S1b
+candidates (the crypto cell's third set), October is the only untouched month for `s1b_by`;
+both months must be sampled, fetched and built by the census tooling before either
+registration is written, and the registration is written before the month is analysed. The raw
+record and the recorder frames on the machine were deleted at the pause (docs/RESUME.md); the
+S5 recording clock restarts from zero.
