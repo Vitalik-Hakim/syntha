@@ -279,3 +279,10 @@ registered on D, then C1, then C2, is **rejected** under §6.2 (40 trades in 14 
 25–90 points, capacity below $50/month; research/studies/s2_deadline_decay/README.md). Register
 rows R-0045…R-0768 carry the outcomes. 2026-09 and 2026-10 join C1 once their markets resolve;
 that is a new registration for whatever is proposed next, not a re-run.
+
+**S1b (registered 2026-09-16 after S1/S2 closed, motivated by the D taker surface and saying
+so):** discovery on D only. The maker-side family is flat (+1.0% equal-weight, 0.0%
+size-weighted); five cells pass the registered rule, of which one has no loss event and three
+rest on 6–12; one (politics [0.20,0.35) −6h) is a candidate for C1/C2. Not run further
+(research/studies/s1b_resting_order/README.md). S3 has a draft registration
+(research/studies/s3_wallets/registration.yaml), not registered and not run.

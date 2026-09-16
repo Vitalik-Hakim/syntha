@@ -798,6 +798,24 @@ recorder is not running and has recorded nothing since 2026-09-14; the README's 
 5–6M delta rows per day for 10 markets does not describe the present. S5 (maker simulation)
 needs ≥ 30 days of E7 recording and has none yet.
 
+### S1b — maker side of the census on D: family flat, five rule-passers, one without a tail (2026-09-16)
+
+Registered before the run (R-0769, 176 cells) with the taker census on D recorded as the
+motivation. Ten D months: 10,323,298 taker-BUY prints in the fill windows, 97% of them on
+ultra_short markets (the 5/15/60-minute crypto series carry the taker flow); 61,131 in the
+primary family (p < 0.35, offsets ≤ 24h). Pooled maker return +0.010 equal-weight, +0.000
+size-weighted, adverse selection ≈ −0.006: the S1 taker's −10.7% in the same cells is mostly
+the CURRENT fee and does not become a maker gain. Five cells pass the registered rule; one
+(politics [0.01,0.03) −1h, 563 prints, no token ever won) has no loss event and a degenerate
+interval; three rest on 6–12 losing events; one (politics [0.20,0.35) −6h, 674 prints, 100
+events, 23 losing events, +0.229, CI +0.12 to +0.31, 9/10 months, $133/month) is a real
+candidate. The report was given `wins (events)` and a "no tail observed" flag after the
+first pass — reporting added, the selection rule untouched. C1/C2 not run (stopped after D
+as instructed). Method notes: 2025 census tokens have no 1-minute bars (marks from the next
+print); Docker's 64 MB /dev/shm forbids parallel workers on the 76M-print joins; the fills
+query needs the month's time bounds for chunk exclusion (a full scan took > 45 min per
+month); per-month fills are cached under data/checkpoints/s1b/.
+
 ### The three M9 decisions (product owner, 2026-09-15)
 
 - **Capacity denominator = the collection's coverage window** (`Dataset.coverage`, from the

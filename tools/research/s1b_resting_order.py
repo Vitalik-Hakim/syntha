@@ -60,66 +60,104 @@ MAX_CANDIDATES = 8
 FDR = 0.10
 SEED = 20260916
 
-PRINT_SQL = """
+FILLS_SQL = """
 WITH obs AS (
     SELECT o.census_id, o.condition_id, o.clob_token_id,
            coalesce(o.event_id, o.condition_id) AS event_id, o.offset_label, o.ts AS t0,
            o.payout::float8 AS payout, m.category, m.duration_class
     FROM census_observations o JOIN census_markets m USING (census_id, condition_id)
     WHERE o.census_id = %(census_id)s
-),
-fills AS (
-    SELECT obs.*, p.id AS print_id, p.ts AS t_p, p.price::float8 AS p, p.size::float8 AS size
-    FROM obs JOIN trade_prints p
-      ON p.clob_token_id = obs.clob_token_id
-     AND p.ts >= obs.t0 AND p.ts < obs.t0 + interval '10 minutes'
-     AND p.side = 'BUY'
 )
-SELECT f.census_id, f.condition_id, f.clob_token_id, f.event_id, f.offset_label, f.t0,
-       f.payout, f.category, f.duration_class, f.print_id, f.t_p, f.p, f.size,
-       b5.price::float8  AS bar5,  b5.staleness_minutes  AS stale5,
-       b30.price::float8 AS bar30, b30.staleness_minutes AS stale30,
-       n5.price::float8  AS next5, n30.price::float8 AS next30
-FROM fills f
-LEFT JOIN price_bars b5
-       ON b5.clob_token_id = f.clob_token_id AND b5.source = 'prices_history'
-      AND b5.ts = date_trunc('minute', f.t_p) + interval '5 minutes'
-LEFT JOIN price_bars b30
-       ON b30.clob_token_id = f.clob_token_id AND b30.source = 'prices_history'
-      AND b30.ts = date_trunc('minute', f.t_p) + interval '30 minutes'
-LEFT JOIN LATERAL (
-    SELECT q.price FROM trade_prints q
-    WHERE q.clob_token_id = f.clob_token_id AND q.ts >= f.t_p + interval '5 minutes'
-      AND q.ts < f.t_p + interval '5 minutes' + interval '24 hours'
-    ORDER BY q.ts LIMIT 1) n5 ON true
-LEFT JOIN LATERAL (
-    SELECT q.price FROM trade_prints q
-    WHERE q.clob_token_id = f.clob_token_id AND q.ts >= f.t_p + interval '30 minutes'
-      AND q.ts < f.t_p + interval '30 minutes' + interval '24 hours'
-    ORDER BY q.ts LIMIT 1) n30 ON true
+SELECT obs.census_id, obs.condition_id, obs.clob_token_id, obs.event_id, obs.offset_label,
+       obs.t0, obs.payout, obs.category, obs.duration_class,
+       p.id AS print_id, p.ts AS t_p, p.price::float8 AS p, p.size::float8 AS size
+FROM obs JOIN trade_prints p
+  ON p.clob_token_id = obs.clob_token_id
+ AND p.ts >= obs.t0 AND p.ts < obs.t0 + interval '10 minutes'
+ AND p.side = 'BUY'
+ AND p.ts >= %(lo)s AND p.ts < %(hi)s   -- chunk exclusion: the month's window
 """
 
-COLUMNS = [
-    "census_id",
-    "condition_id",
-    "clob_token_id",
-    "event_id",
-    "offset",
-    "t0",
-    "payout",
-    "category",
-    "duration_class",
-    "print_id",
-    "t_p",
-    "p",
-    "size",
-    "bar5",
-    "stale5",
-    "bar30",
-    "stale30",
-    "next5",
-    "next30",
-]
+# every print (any side) and every 1-minute bar of the month's census tokens, for the marks
+PRINTS_SQL = """
+SELECT p.clob_token_id, p.ts, p.price::float8
+FROM trade_prints p
+WHERE p.clob_token_id IN (SELECT clob_token_id FROM census_observations WHERE census_id = %(census_id)s)
+  AND p.ts >= %(lo)s AND p.ts < %(hi)s
+"""
+BARS_SQL = """
+SELECT b.clob_token_id, b.ts, b.price::float8, b.staleness_minutes
+FROM price_bars b
+WHERE b.clob_token_id IN (SELECT clob_token_id FROM census_observations WHERE census_id = %(census_id)s)
+  AND b.source = 'prices_history' AND b.ts >= %(lo)s AND b.ts < %(hi)s
+"""
+BOUNDS_SQL = """
+SELECT min(ts), max(ts) + interval '10 minutes' + interval '30 minutes' + interval '24 hours'
+FROM census_observations WHERE census_id = %(census_id)s
+"""
+
+TS = pl.Datetime("us", "UTC")
+FILL_SCHEMA: dict[str, Any] = {
+    "census_id": pl.Utf8,
+    "condition_id": pl.Utf8,
+    "clob_token_id": pl.Utf8,
+    "event_id": pl.Utf8,
+    "offset": pl.Utf8,
+    "t0": TS,
+    "payout": pl.Float64,
+    "category": pl.Utf8,
+    "duration_class": pl.Utf8,
+    "print_id": pl.Int64,
+    "t_p": TS,
+    "p": pl.Float64,
+    "size": pl.Float64,
+}
+PRINT_SCHEMA: dict[str, Any] = {"clob_token_id": pl.Utf8, "ts": TS, "price": pl.Float64}
+BAR_SCHEMA: dict[str, Any] = {
+    "clob_token_id": pl.Utf8,
+    "ts": TS,
+    "price": pl.Float64,
+    "staleness_minutes": pl.Int64,
+}
+CACHE = ROOT / "data" / "checkpoints" / "s1b"
+
+
+def _marks(fills: pl.DataFrame, prints: pl.DataFrame, bars: pl.DataFrame) -> pl.DataFrame:
+    """bar5/stale5/bar30/stale30 (the 1-minute bar at the mark minute) and next5/next30 (the
+    first print of any side at or after the mark time, within 24 hours) for every fill."""
+    prints = prints.sort(["clob_token_id", "ts"])
+    out = fills.with_row_index("_i")
+    for d in MARKS_MIN:
+        key = f"_m{d}"
+        with_key = out.with_columns(
+            (pl.col("t_p") + pl.duration(minutes=d)).alias(key),
+            (pl.col("t_p").dt.truncate("1m") + pl.duration(minutes=d)).alias(f"{key}_bar"),
+        )
+        nxt = (
+            with_key.select("_i", "clob_token_id", key)
+            .sort(key)
+            .join_asof(
+                prints.rename({"ts": key, "price": f"next{d}"}),
+                on=key,
+                by="clob_token_id",
+                strategy="forward",
+                tolerance=f"{MARK_FALLBACK_H}h",
+            )
+            .select("_i", f"next{d}")
+        )
+        bar = (
+            with_key.select("_i", "clob_token_id", f"{key}_bar")
+            .join(
+                bars.rename(
+                    {"ts": f"{key}_bar", "price": f"bar{d}", "staleness_minutes": f"stale{d}"}
+                ),
+                on=["clob_token_id", f"{key}_bar"],
+                how="left",
+            )
+            .select("_i", f"bar{d}", f"stale{d}")
+        )
+        out = out.join(nxt, on="_i", how="left").join(bar, on="_i", how="left")
+    return out.drop("_i")
 
 
 def current_fee_terms_by_category() -> dict[str, tuple[float, int]]:
@@ -135,14 +173,42 @@ def current_fee_terms_by_category() -> dict[str, tuple[float, int]]:
     return out
 
 
+def load_month(conn: psycopg.Connection[Any], month: str) -> pl.DataFrame:
+    """One month's fills with their marks; cached as parquet so a rerun does not requery."""
+    CACHE.mkdir(parents=True, exist_ok=True)
+    cached = CACHE / f"{month}.parquet"
+    if cached.exists():
+        df = pl.read_parquet(cached)
+        print(f"  census-{month}: {df.height:,} fills (cached)", flush=True)
+        return df
+    params: dict[str, Any] = {"census_id": f"census-{month}"}
+    lo, hi = conn.execute(BOUNDS_SQL, params).fetchone()  # type: ignore[misc]
+    params |= {"lo": lo, "hi": hi}
+    fills = pl.DataFrame(
+        conn.execute(FILLS_SQL, params).fetchall(), schema=FILL_SCHEMA, orient="row"
+    )
+    prints = pl.DataFrame(
+        conn.execute(PRINTS_SQL, params).fetchall(), schema=PRINT_SCHEMA, orient="row"
+    )
+    bars = pl.DataFrame(conn.execute(BARS_SQL, params).fetchall(), schema=BAR_SCHEMA, orient="row")
+    df = _marks(fills, prints, bars).drop("print_id")
+    df.write_parquet(cached)
+    print(
+        f"  census-{month}: {fills.height:,} taker-BUY prints in fill windows "
+        f"({prints.height:,} prints and {bars.height:,} 1-minute bars for the marks)",
+        flush=True,
+    )
+    return df
+
+
 def load(months: list[str]) -> pl.DataFrame:
     frames = []
     with psycopg.connect(_url()) as conn:
         conn.execute("SET statement_timeout = 0")
+        # Docker's 64 MB /dev/shm cannot hold parallel workers' hash tables on 76M prints
+        conn.execute("SET max_parallel_workers_per_gather = 0")
         for month in months:
-            rows = conn.execute(PRINT_SQL, {"census_id": f"census-{month}"}).fetchall()
-            frames.append(pl.DataFrame(rows, schema=COLUMNS, orient="row"))
-            print(f"  census-{month}: {len(rows):,} taker-BUY prints in fill windows", flush=True)
+            frames.append(load_month(conn, month))
     df = pl.concat(frames)
     fees = current_fee_terms_by_category()
     fee_expr: pl.Expr = pl.lit(0.0)
@@ -212,6 +278,11 @@ def cell_table(df: pl.DataFrame, months: list[str], resamples: int) -> pl.DataFr
                     "n": n,
                     "n_events": int(cell["event_id"].n_unique()) if n else 0,
                     "n_markets": int(cell["condition_id"].n_unique()) if n else 0,
+                    # the maker's loss events: prints whose token paid out (r = −1)
+                    "n_wins": int((cell["payout"] >= 0.5).sum()) if n else 0,
+                    "n_win_events": int(cell.filter(pl.col("payout") >= 0.5)["event_id"].n_unique())
+                    if n
+                    else 0,
                 }
                 if n:
                     h = headline(
@@ -324,6 +395,20 @@ def select_candidates(
     return candidates[:MAX_CANDIDATES], bh_pass
 
 
+MIN_WIN_EVENTS = 5
+
+
+def _tail(r: dict[str, Any]) -> str:
+    """A maker's loss is the token paying out (r = −1). With fewer than MIN_WIN_EVENTS events
+    in which that happened, the cluster bootstrap has (almost) no losses to resample and its
+    interval says nothing about the tail: the cell is flagged, whatever the rule says."""
+    return (
+        f"no tail observed ({r['n_win_events']} loss events)"
+        if r["n_win_events"] < MIN_WIN_EVENTS
+        else ""
+    )
+
+
 def _f(x: float | None, spec: str = "+.3f") -> str:
     return "—" if x is None else format(x, spec)
 
@@ -366,19 +451,24 @@ def write_report(
         "",
     ]
     if candidates:
-        lines.append(f"**{len(candidates)} candidate cell(s)** cleared the registered rule.")
+        flagged = sum(1 for c in candidates if _tail(c))
+        lines.append(
+            f"**{len(candidates)} candidate cell(s)** cleared the registered rule; {flagged} of them "
+            f"with fewer than {MIN_WIN_EVENTS} loss events (a maker loses when the token pays out), "
+            "where the bootstrap interval cannot see the tail — flagged in the last column, not removed."
+        )
         lines.append("")
         lines.append(
-            "| # | Category | Bucket | Offset | n | events | r_maker | 90% CI (key) | size-weighted | rebate 25% | AS 5m | AS 30m | MDE@80% | months + | capacity $1k/mo | BH 10% (descr.) |"
+            "| # | Category | Bucket | Offset | n | events | wins (events) | r_maker | 90% CI (key) | size-weighted | rebate 25% | AS 5m | AS 30m | MDE@80% | months + | capacity $1k/mo | BH 10% (descr.) | tail |"
         )
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for i, c in enumerate(candidates, start=1):
             key = f"{c['category']}|{c['bucket']}|{c['offset']}"
             lines.append(
-                f"| {i} | {c['category']} | {c['bucket']} | {c['offset']} | {c['n']:,} | {c['n_events']} | {_f(c['r_maker'])} | "
+                f"| {i} | {c['category']} | {c['bucket']} | {c['offset']} | {c['n']:,} | {c['n_events']} | {c['n_wins']} ({c['n_win_events']}) | {_f(c['r_maker'])} | "
                 f"{_f(c['ci_lo'])} to {_f(c['ci_hi'])} ({c['cluster_key']}) | {_f(c['r_size_weighted'])} | {_f(c['r_rebate'])} | "
                 f"{_f(c['as5'])} | {_f(c['as30'])} | {_f(c['mde_80'], '.3f')} | {c['pos_months']}/{c['seen_months']} | "
-                f"${c['capacity_1000']:,.0f} | {'pass' if key in bh_pass else 'no'} |"
+                f"${c['capacity_1000']:,.0f} | {'pass' if key in bh_pass else 'no'} | {_tail(c)} |"
             )
     else:
         lines.append(
@@ -389,9 +479,9 @@ def write_report(
     lines.append("## Primary family — every cell with data (n ≥ 30)")
     lines.append("")
     lines.append(
-        "| Category | Bucket | Offset | n | events | r_maker | 90% CI | size-wtd | rebate 25% | AS 5m (cov.) | AS 30m (cov.) | MDE@80% | months + | capacity | status |"
+        "| Category | Bucket | Offset | n | events | wins (events) | r_maker | 90% CI | size-wtd | rebate 25% | AS 5m (cov.) | AS 30m (cov.) | MDE@80% | months + | capacity | status |"
     )
-    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in (
         prim.filter(pl.col("n") >= 30).sort(["offset", "bucket", "category"]).iter_rows(named=True)
     ):
@@ -413,10 +503,10 @@ def write_report(
             else "no effect detected"
         )
         lines.append(
-            f"| {r['category']} | {r['bucket']} | {r['offset']} | {r['n']:,} | {r['n_events']} | {_f(r['r_maker'])} | "
+            f"| {r['category']} | {r['bucket']} | {r['offset']} | {r['n']:,} | {r['n_events']} | {r['n_wins']} ({r['n_win_events']}) | {_f(r['r_maker'])} | "
             f"{_f(r['ci_lo'])} to {_f(r['ci_hi'])} | {_f(r['r_size_weighted'])} | {_f(r['r_rebate'])} | "
             f"{_f(r['as5'])} ({r['as5_coverage']:.0%}) | {_f(r['as30'])} ({r['as30_coverage']:.0%}) | {_f(r['mde_80'], '.3f')} | "
-            f"{r['pos_months']}/{r['seen_months']} | ${r['capacity_1000']:,.0f} | {status} |"
+            f"{r['pos_months']}/{r['seen_months']} | ${r['capacity_1000']:,.0f} | {status}{'; ' + _tail(r) if _tail(r) else ''} |"
         )
     n_empty = prim.filter(pl.col("n") < 30).height
     lines.append("")
