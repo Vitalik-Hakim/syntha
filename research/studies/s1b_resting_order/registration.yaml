@@ -1,0 +1,102 @@
+# PRD v3 §7.6 registration — S1b, the maker side of the calibration census.
+# Committed before the study runs. Changing anything below after data is seen is a new
+# registration with its own register rows; this file is not edited.
+study: s1b_resting_order
+title: Resting-order return at taker-BUY prints (maker side of S1)
+registered_at: 2026-09-16T12:30:00Z
+registered_by: Claude Code (agent) on behalf of Vitalik Hakim
+data_seen_before_registration:
+  - "Everything S1 and S2 saw (research/studies/s1_calibration/registration.yaml, s2_deadline_decay/registration.yaml)."
+  - "The full S1 taker calibration surface on D (research/studies/s1_calibration/report, pass 3, 2026-09-16) and the S2 confirmation runs on D, C1 and C2. This registration is informed by D — see motivation — so D can only be its discovery set; nothing of C1 or C2 was examined for maker returns."
+  - "The fourteen census months are built; prints and hourly/1-minute bars for them are in the normalized layer (dataset version 8cac86a6). No maker-side statistic has been computed from any of it."
+motivation_from_data: >
+  The taker census on D motivated this family. In the S1 surface, taker BUY fills in the four
+  price buckets below 0.35 at the four offsets within 24 hours of the scheduled end returned
+  −10.7% per dollar pooled under CURRENT fees (7,685 fills; −9.5% to −11.5% by bucket) while
+  the mid was only 1.8 points above the realised payout. If takers overpay at low prices near
+  the deadline, the maker resting at those prices — who pays no taker fee — is the natural
+  counterparty to measure. The family below is therefore pre-specified from D, and D is its
+  discovery set, not evidence for it.
+discovery_set:
+  D: [2025-07, 2025-08, 2025-09, 2025-10, 2025-11, 2025-12, 2026-02, 2026-03, 2026-04, 2026-05]
+confirmation_sets:
+  C1: [2026-06, 2026-07, 2026-08]
+  C2: [2026-01, 2026-09, 2026-10]   # 2026-09/10 once their markets resolve
+unit_of_observation: >
+  One taker-BUY print p (price, size, time t_p) on a census token inside the fill window
+  [t_offset, t_offset + 10 min] of a census observation (§4.1 offsets). All taker-BUY prints in
+  the window count, not only those within a tick of mid (S1's fill rule); a print is the
+  evidence that a resting order at that price on the other side was filled.
+estimand: >
+  Return to a maker whose resting order was the other side of print p and who holds the
+  complement to resolution:
+    r_maker = (p − payout_token) / (1 − p)
+  (the maker sold the token at p, equivalently bought the complement at 1 − p; the complement
+  pays 1 − payout_token). No taker fee. Rebate 0 in the headline; sensitivity: rebate =
+  0.25 × the taker fee the taker paid on p under the category's CURRENT schedule, added to the
+  maker's proceeds (HISTORICAL rebates would be 0 on the fee-free 2025 months, docs/DECISIONS.md
+  "M9 prep"). Per cell: equal-weight mean over prints (headline) and size-weighted mean
+  (reported); cluster bootstrap by event_id and by UTC day, the wider 90% interval is the
+  headline; MDE@80% = 2.48 × cluster SE on every cell.
+adverse_selection: >
+  Mark the position 5 and 30 minutes after the fill: AS_Δ = (p − mark_Δ) / (1 − p), where
+  mark_Δ is the token's 1-minute bar price at t_p + Δ where a 1-minute bar exists for that
+  minute (source `prices_history`, staleness ≤ Δ), otherwise the first print of any side at or
+  after t_p + Δ within 24 hours, otherwise null (counted, never imputed). Reported per cell
+  next to r_maker; a cell whose r_maker is positive but whose AS_30 is strongly negative is a
+  cell where the maker is picked off and rescued by resolution, and is said so.
+primary_cells: category x price_bucket x offset   # count written by register.py
+cell_dimensions:
+  category: [sports, crypto, politics, geopolitics, finance, economics, culture, weather, tech, mentions, other]
+  price_bucket: ["[0.01,0.03)", "[0.03,0.10)", "[0.10,0.20)", "[0.20,0.35)"]
+  offset: ["-24h", "-6h", "-1h", "-15m"]
+price_bucket_is_on: the print price p (the maker's fill price on the token side)
+secondary_family: >
+  Every other combination — print prices in [0.35, 0.99] and the −7d / −3d offsets — is
+  computed and reported with the same statistics and MDE but is never selected from; the
+  register carries the 176 primary cells only, and the report states the count of secondary
+  cells it shows.
+exclusions:
+  - "ultra_short markets (question window ≤ 60 min or end − open ≤ 60 min) are measured and reported separately, never pooled into primary cells (the pass-1 S1 artefact)"
+  - "prints whose token has no payout (unresolved or invalid market) are dropped and counted"
+  - "prints at p ≤ 0.01 or p ≥ 0.99 are outside every bucket"
+  - "a month enters D only if its census build passed acceptance"
+selection_rule: |
+  A primary cell is a candidate if all of:
+  - the wider cluster 90% CI of r_maker (rebate 0) is above zero;
+  - r_maker is positive in >= 7 of the 10 discovery months;
+  - capacity >= $50/month at $1,000 with 10% of flow, where capacity per month =
+    sum over (token, offset) windows of min(2% x $1,000, 0.10 x sum over the window's taker-BUY
+    prints of (1 − p) x size) divided by the number of months;
+  - n >= 500 prints from >= 30 distinct events (a size bar, as in S1; cells below 300 prints
+    are underpowered and carry their MDE).
+  No FDR step is applied for selection beyond this rule; the report states N = 176 from the
+  register and, as a descriptive column, the BH 10% q-value of each cell so a reader can see
+  what an FDR rule would have said. At most 8 candidates, ordered by r_maker x capacity.
+underpowered_rule: cells with fewer than 300 prints are reported as underpowered with their MDE@80% and are never selected
+confirmation_rule: >
+  PRD v3 §6.2 on C1 then C2 with the same estimand recomputed from the census prints of those
+  months (the engine has no resting-order fill model until S5; this study is measurement, and
+  any candidate's confirmation is the same measurement out of sample, stated as such). Verdict
+  vocabulary: confirmed / promising-unconfirmed / rejected / underpowered. A confirmed cell
+  becomes an S5 stratum, not a strategy.
+frozen_parameters:
+  fill_window_minutes: 10
+  prints_used: all taker-BUY prints in the window (side = BUY on the token)
+  taker_fee_for_rebate: CURRENT schedule of the category at price p (categories without a schedule pay 0)
+  rebate_sensitivity: 0.25
+  marks_minutes: [5, 30]
+  mark_fallback_horizon_hours: 24
+  participation: 0.10
+  sizing: 2% of $1,000 per window
+  bootstrap_resamples: 10000
+  seed: 20260916
+what_would_kill_it: |
+  r_maker positive only in cells where AS_30 is strongly negative (resolution rescues a
+  picked-off maker); sign flips between 2025 H2 and 2026 Feb–May; an effect that disappears
+  under the size-weighted mean (a few tiny prints carry it); failure on C1 or C2;
+  fewer than 500 prints in every primary cell.
+outputs:
+  - research/studies/s1b_resting_order/report/resting.parquet (every primary and secondary cell)
+  - research/studies/s1b_resting_order/report/report.md (candidates or "none", negative space with MDE, adverse-selection table, rebate sensitivity, register N)
+  - research/studies/s1b_resting_order/report/summary.json

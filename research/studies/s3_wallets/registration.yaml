@@ -1,0 +1,87 @@
+# PRD v3 §7.6 registration — S3, wallet skill persistence (§5.3). DRAFT: written 2026-09-16,
+# not yet registered (no register rows, nothing run). Registering it (`register.py
+# add-registration`) freezes it; until then it may be edited.
+study: s3_wallets
+title: Wallet skill persistence — do point-in-time winners stay informative?
+registered_at: null   # set when registered
+registered_by: Claude Code (agent) on behalf of Vitalik Hakim
+status: draft
+data_seen_before_registration:
+  - "Everything S1, S1b and S2 saw. No per-wallet statistic has been computed from trade_prints or from any Data API wallet endpoint beyond the single-wallet Appendix B probe (docs/DATA_NOTES.md, 'M9 prep': /v2/trades accepts user=; /activity and /positions shapes)."
+phases:
+  A: "records from `trade_prints.proxy_wallet` on the census and sampled collections (partial, lower-bound records); hypothesis-generating on D only"
+  B: "records from complete per-wallet histories (`wallet_prints`, D3) for the wallets Phase A ranks; discovery on D, confirmation on C1 then C2"
+discovery_set:
+  D: [2026-02, 2026-03, 2026-04, 2026-05]   # PRD v3 §5.3 Phase A months; 2025 H2 added in Phase B if wallet histories reach back
+confirmation_sets:
+  C1: [2026-06, 2026-07, 2026-08]
+  C2: [2026-01, 2026-09, 2026-10]
+point_in_time_record: >
+  For wallet w at time t, over w's prints on markets with resolved_at < t: n_resolved_markets,
+  net realized P&L (payout or sell proceeds − cost, HISTORICAL fees), hit rate, concentration
+  (share of P&L from the best single market), category split. Nothing resolved at or after t
+  enters the record; records are recomputed at every signal time, never rolled forward.
+exclusions_point_in_time:
+  HEDGED: bought both tokens of one market within 24 h
+  HIGH_FREQ: median > 200 prints/day over the trailing 30 days
+  SCALPER_98: "> 80% of buys at >= 0.95 (its own stratum, not followed)"
+  ONE_HIT: concentration > 0.5 with fewer than 20 resolved markets
+fill_side_classification: >
+  Every print carries the taker's side; the wallet on the print is the taker. A wallet whose
+  prints are predominantly the *maker* side cannot be seen on prints as a taker — its fills
+  appear as other wallets' taker prints. Wallets are classified point-in-time by the share of
+  their notional that was taker-executed: TAKER (>= 80% taker), MIXED, MAKER (<= 20% taker,
+  visible only through Phase B histories that carry the wallet's own maker fills). MAKER
+  wallets form their own stratum — measured for the S1b/S5 maker questions — and are never
+  "followed": following a maker's fill means copying a resting order after it was hit, which
+  is a different trade. The classification threshold is frozen here.
+signal: >
+  A taker BUY print of notional >= min_notional by a wallet in the top decile of eligible
+  wallets (>= 20 resolved markets, not excluded, class TAKER or MIXED) as of the print time.
+  Registered min_notional values: [100, 500].
+fill_models:
+  marketable_limit: "the follower enters at t + lag with a LIMIT +2 ticks order, TTL 5 bars, 2% of capital (v3 E1; the engine's REALISTIC execution)"
+  resting_order: "the follower rests a bid at the wallet's print price from t + lag; filled only when a later taker-SELL print trades at or below it within TTL 5 bars (size >= order size) — the S1b/S5 fill convention; no taker fee, rebate 0"
+  reporting: "every lag x variant is reported under both models; a signal is 'capturable' only if it is positive under the marketable-limit model, since the resting model needs the market to come back"
+lag_grid_minutes: [1, 5, 15, 60]
+variants:
+  A: hold to settlement
+  B: exit on the wallet's taker SELL (E4)
+nulls:
+  permutation: "same signal timestamps, a random other eligible wallet's BUY print in the same category at the same time bucket (does *who* matter?); 1,000 draws; the report states how often the null beats the actual decay curve"
+  size_matched: "random prints of the same notional tier (100–500, 500–2,000, > 2,000) at the same offsets (does *size* explain it — the follower buys the price impact?); 1,000 draws"
+primary_cells: min_notional x lag x variant x fill_model   # 2 x 4 x 2 x 2 = 32; count written by register.py
+cell_dimensions:
+  min_notional: [100, 500]
+  lag: [1, 5, 15, 60]
+  variant: [A, B]
+  fill_model: [marketable_limit, resting_order]
+estimand: >
+  E[r] per follower position under CURRENT fees, reported as a decay curve over lag per
+  (min_notional, variant, fill_model); cluster bootstrap by event and by UTC day, wider 90% CI
+  as headline; MDE@80% on every cell; both nulls' best-of-N alongside.
+selection_rule: |
+  A cell is a candidate if all of: wider cluster 90% CI above zero under the marketable-limit
+  model; positive in >= 3 of 4 Phase A months; beats both nulls' 95th percentile; n >= 300
+  follower positions from >= 100 distinct wallets; capacity >= $50/month at $1,000 with 10%
+  participation. min_notional and lag are chosen on D and frozen before Phase B fetches.
+confirmation_rule: PRD v3 §6.2 on C1 then C2, both fill models reported, verdict on the marketable-limit model
+frozen_parameters:
+  limit_offset_ticks: 2
+  ttl_bars: 5
+  sizing: 2% of capital, max_positions_per_event 1
+  participation: 0.10
+  top_decile_of: eligible wallets as of t
+  min_resolved_markets: 20
+  taker_share_thresholds: {TAKER: 0.80, MAKER: 0.20}
+  null_draws: 1000
+what_would_kill_it: |
+  the decay curve is flat in lag but the permutation null matches it (any wallet works: it is
+  the category or the moment, not the wallet); the size-matched null matches it (price impact,
+  not skill); positive only under the resting-order model; Phase B complete histories reverse
+  the Phase A ranking; wallets in the top decile at t are not in it at t + 1 month more often
+  than chance.
+privacy: wallet addresses stay inside the app and research artefacts; no leaderboard is published (PRD v3 §4.3)
+outputs:
+  - research/studies/s3_wallets/report/decay.parquet
+  - research/studies/s3_wallets/report/report.md (decay curves per model, nulls, negative space with MDE, register N)
