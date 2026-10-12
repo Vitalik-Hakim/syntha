@@ -867,6 +867,54 @@ committed hour: about 440k delta rows and 26 MB of gzip frames per hour for 42 t
 roughly 10M rows and 0.6 GB of raw frames per day at this watchlist size — the 24-hour
 confirmation the plan asked for was never reached.
 
+### S1b stage 3 — direct fetch of the September–October 2026 crypto universe (2026-10-12)
+
+Method facts recorded while confirming R-0793 out of sample (`tools/research/s1b_stage3.py`,
+`reports/s1b-stage3.md`), without the database or the normalized layer:
+
+- **Listing size.** `GET /markets/keyset?closed=true&end_date_min=2026-09-01T00:00:00Z&
+  end_date_max=2026-10-12T23:59:59Z` returns 1,409,910 distinct markets in 14,100 pages
+  (~33,600 markets per day). 1,064,386 carry `sports_fees_v3` — per-game spread and
+  over/under ladders at many lines — and are genuinely multi-day; 181,149 carry
+  `crypto_fees_v2`; 68,198 carry a new fee type **`zero_fees`**. The listing runs at about
+  four pages per second from one address, so six weeks take an hour.
+- **`zero_fees`.** A fee type that names no category. `fee_category` maps it to `zero`, so the
+  registered "feeType → category, else tags" rule would file such markets under a category
+  that does not exist. The stage-3 tool lets a fee type that names no known category fall
+  through to the event's tags; in this range every `zero_fees` market was a sports O/U or
+  spread, so no crypto market was affected and the correction changed nothing here. It
+  belongs in the ingestion rule before the next census month is built.
+- **A new hourly crypto series.** "<coin> above <strike> on <date>, <hour> ET?" — one strike
+  per coin per hour, created about 79 minutes before its end: 36,090 of the 45,554
+  crypto-category markets in the range. The question names a point in time, not a window, and
+  end − open is 79 minutes, so the registered `ultra_short` rule (question window ≤ 60 min or
+  end − open ≤ 60 min) leaves it in the cell as `intraday`. Probes of one day each: present at
+  ~850 per day on 2026-06-10 and 2026-07-15, 36 on 2026-08-15, absent on 2026-01-15 and
+  2026-03-10 — so C1 contained the series and D and January did not. In the released per-print
+  data the cell's C1 rows are nonetheless 97% multi-day ladders: the census sampled at most
+  2,000 crypto/intraday markets a month, and the series rarely prints at 3–10¢ in the last
+  quarter-hour. The stage-3 report shows the cell with and without the series; the classifier
+  was not changed.
+- **Fee and rebate schedule, read from the docs on 2026-10-12.** `docs.polymarket.com/trading/
+  fees`: fee = C × feeRate × p × (1 − p), crypto taker rate 0.07, "Makers are never charged
+  fees", rounded to 5 decimals. `docs.polymarket.com/programs/maker-rebates`: crypto makers
+  receive 20% of taker fees, paid daily per market pro rata by fee-equivalent volume, "at the
+  sole discretion of Polymarket". The seeded schedule (`crypto_fees_v2`, 0.07, exponent 1,
+  from 2026-03-30) matches. A per-fill rebate of 20% of the taker's fee is an upper bound (a
+  lone maker takes the whole pool).
+- **Historical best bid/ask** for a past window does not exist in any public endpoint; the
+  registered fill model does not need it (prints), and the registered mark source
+  (`/prices-history` at fidelity 1) is fetched for the last six hours.
+- **Resolutions.** `/v2/resolutions` rows key on `condition_id`; `resolved_at` is present on the
+  V2/CTF shape only.
+- **Result (reports/s1b-stage3.md).** 45,554 in-cell markets, 1 unresolved, 34,977 with no
+  taker-BUY print in the window; 894 fills on 346 markets, 22 losing events; maker return
+  −3.9% per complement dollar (90% CI −8.5% to +0.4%, event clusters), both months negative,
+  conservative −4.9% (−9.5% to −0.6%), today's 20% rebate +0.1 point: **fail** against the
+  registered per-set rule; registered C2 (January ∪ this set) −0.5%, fail; verdict
+  **rejected** (R-0793, R-0946). The cell's sign flipped on the first full-population set,
+  which also had the most losing events (D 6, C1 16, January 5, here 22).
+
 ### The three M9 decisions (product owner, 2026-09-15)
 
 - **Capacity denominator = the collection's coverage window** (`Dataset.coverage`, from the

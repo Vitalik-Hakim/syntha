@@ -316,3 +316,14 @@ both months must be sampled, fetched and built by the census tooling before eith
 registration is written, and the registration is written before the month is analysed. The raw
 record and the recorder frames on the machine were deleted at the pause (docs/RESUME.md); the
 S5 recording clock restarts from zero.
+
+### S1b stage 3 (2026-10-12)
+
+At the owner's instruction, the one S1b cell with a C1 pass (crypto [0.03,0.10) −15m, R-0793)
+was confirmed out of sample on crypto-category markets with scheduled end 2026-09-01 …
+2026-10-12, fetched directly (no census sample, no database), with the cell definition, fill
+model, metric, bar and bootstrap unchanged and the manifest written before any trade was
+fetched (`reports/s1b-stage3.md`, `reports/s1b-stage3-manifest.json.gz`). Result: fail on the
+set, **rejected** under the registered verdict rule. The September/October months were not
+turned into census months and the other four S1b cells and `s1b_by` were not run; those remain
+new registrations on resume as the "Pause" section says.
