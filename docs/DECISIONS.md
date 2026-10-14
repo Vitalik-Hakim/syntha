@@ -642,3 +642,31 @@ row and noting the date.
   `min_losing_events: 5` (docs/RESEARCH_PROTOCOL.md). Not applied retroactively to S1b's
   selection rule; its report flags such cells instead, and its confirmation criteria require
   five losing events for a set to be decisive.
+
+- **Commit messages reworded, hashes changed (2026-10-14).** Before the repository went public the
+  ten vague early messages ("initial commit" … "9th commit", "census completed") were rewritten
+  and every later commit got a new hash; file contents are byte-identical (same final tree).
+  Documents written earlier cite the old hashes (for example the S1b registration's "commit
+  e56cd48" and docs/RESUME.md's `b02a775`, `060c7b4`); they are left as written. Old to new:
+
+| old | new |
+|---|---|
+| `7857987` | `09dab5b` |
+| `ae4985a` | `38eae70` |
+| `2e1b55c` | `20e15ed` |
+| `cb0d3db` | `04fc085` |
+| `7d6781e` | `8105c3b` |
+| `d9de9ef` | `d46e5b3` |
+| `88514e8` | `08e1431` |
+| `ebc49c5` | `42d7d1e` |
+| `c12860e` | `bfd552a` |
+| `9c21a49` | `adec45e` |
+| `7345656` | `a4d7bd1` |
+| `977e4d4` | `eb2ba79` |
+| `c65c59c` | `c4c39dd` |
+| `f469eec` | `ed5180b` |
+| `ca1067a` | `cf1a177` |
+| `e56cd48` | `ee94086` |
+| `b02a775` | `8403f0b` |
+| `060c7b4` | `fbaa22d` |
+| `1ce2bad` | `75b966b` |
